@@ -1,0 +1,26 @@
+{
+  "name": "custodian",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun run src/index.tsx",
+    "build": "bun run build.ts",
+    "compile": "bun run build.ts compile",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "bun run src/db/migrate.ts"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.2.15",
+    "@opentui/core": "latest",
+    "@opentui/solid": "latest",
+    "diff": "^7.0.0",
+    "drizzle-orm": "^0.39.0",
+    "solid-js": "^1.9.0"
+  },
+  "devDependencies": {
+    "@types/diff": "^6.0.0",
+    "drizzle-kit": "^0.30.0",
+    "typescript": "^5.7.0"
+  }
+}
