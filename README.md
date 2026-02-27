@@ -2,6 +2,8 @@
 
 Terminal-first AI coding assistant with a three-pane workflow: files, diff, and chat.
 
+<img width="3792" height="2060" alt="image" src="https://github.com/user-attachments/assets/b2be21df-892e-40f5-8aea-41dcd6bc86b1" />
+
 ## What it does
 
 - Reviews git changes in a built-in diff viewer.
