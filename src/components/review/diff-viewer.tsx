@@ -1,6 +1,7 @@
-import { Show, For, createMemo } from "solid-js"
-import type { FileDiff, DiffLine } from "../../core/diff"
-import { flattenHunkLines } from "../../core/diff"
+import { Show, createMemo } from "solid-js"
+import { SyntaxStyle, RGBA } from "@opentui/core"
+import type { FileDiff } from "../../core/diff"
+import { filetypeFromPath } from "../../core/diff"
 
 interface DiffViewerProps {
   file: FileDiff | null
@@ -8,162 +9,96 @@ interface DiffViewerProps {
   selectedHunkIndex: number
 }
 
-const LINE_COLORS: Record<string, string> = {
-  add: "#00FF00",
-  remove: "#FF4444",
-  context: "#cccccc",
-  header: "#87CEEB",
-}
+let _syntaxStyle: SyntaxStyle | null = null
 
-const LINE_BG: Record<string, string | undefined> = {
-  add: "#002200",
-  remove: "#220000",
-  context: undefined,
-  header: undefined,
-}
+function getSyntaxStyle(): SyntaxStyle {
+  if (!_syntaxStyle) {
+    _syntaxStyle = SyntaxStyle.fromStyles({
+      "keyword":              { fg: RGBA.fromHex("#c678dd") },
+      "keyword.function":     { fg: RGBA.fromHex("#c678dd") },
+      "keyword.return":       { fg: RGBA.fromHex("#c678dd") },
+      "keyword.operator":     { fg: RGBA.fromHex("#c678dd") },
+      "keyword.import":       { fg: RGBA.fromHex("#c678dd") },
+      "keyword.export":       { fg: RGBA.fromHex("#c678dd") },
+      "keyword.type":         { fg: RGBA.fromHex("#c678dd") },
+      "keyword.conditional":  { fg: RGBA.fromHex("#c678dd") },
+      "keyword.repeat":       { fg: RGBA.fromHex("#c678dd") },
+      "keyword.exception":    { fg: RGBA.fromHex("#c678dd") },
 
-function linePrefix(type: string): string {
-  switch (type) {
-    case "add":
-      return "+"
-    case "remove":
-      return "-"
-    case "header":
-      return "@"
-    default:
-      return " "
+      "string":               { fg: RGBA.fromHex("#98c379") },
+      "string.special":       { fg: RGBA.fromHex("#98c379") },
+      "string.escape":        { fg: RGBA.fromHex("#56b6c2") },
+      "string.regex":         { fg: RGBA.fromHex("#e06c75") },
+
+      "comment":              { fg: RGBA.fromHex("#5c6370"), italic: true },
+      "comment.line":         { fg: RGBA.fromHex("#5c6370"), italic: true },
+      "comment.block":        { fg: RGBA.fromHex("#5c6370"), italic: true },
+
+      "function":             { fg: RGBA.fromHex("#61afef") },
+      "function.call":        { fg: RGBA.fromHex("#61afef") },
+      "function.method":      { fg: RGBA.fromHex("#61afef") },
+      "function.builtin":     { fg: RGBA.fromHex("#61afef") },
+      "function.macro":       { fg: RGBA.fromHex("#61afef") },
+      "method":               { fg: RGBA.fromHex("#61afef") },
+
+      "variable":             { fg: RGBA.fromHex("#e06c75") },
+      "variable.builtin":     { fg: RGBA.fromHex("#e06c75") },
+      "variable.parameter":   { fg: RGBA.fromHex("#e06c75") },
+      "variable.member":      { fg: RGBA.fromHex("#e06c75") },
+
+      "type":                 { fg: RGBA.fromHex("#e5c07b") },
+      "type.builtin":         { fg: RGBA.fromHex("#e5c07b") },
+      "type.definition":      { fg: RGBA.fromHex("#e5c07b") },
+      "type.qualifier":       { fg: RGBA.fromHex("#e5c07b") },
+
+      "constructor":          { fg: RGBA.fromHex("#e5c07b") },
+      "class":                { fg: RGBA.fromHex("#e5c07b") },
+      "interface":            { fg: RGBA.fromHex("#e5c07b") },
+
+      "constant":             { fg: RGBA.fromHex("#d19a66") },
+      "constant.builtin":     { fg: RGBA.fromHex("#d19a66") },
+      "boolean":              { fg: RGBA.fromHex("#d19a66") },
+      "number":               { fg: RGBA.fromHex("#d19a66") },
+      "float":                { fg: RGBA.fromHex("#d19a66") },
+
+      "operator":             { fg: RGBA.fromHex("#56b6c2") },
+      "punctuation":          { fg: RGBA.fromHex("#abb2bf") },
+      "punctuation.bracket":  { fg: RGBA.fromHex("#abb2bf") },
+      "punctuation.delimiter":{ fg: RGBA.fromHex("#abb2bf") },
+      "punctuation.special":  { fg: RGBA.fromHex("#56b6c2") },
+
+      "property":             { fg: RGBA.fromHex("#e06c75") },
+      "field":                { fg: RGBA.fromHex("#e06c75") },
+      "attribute":            { fg: RGBA.fromHex("#e5c07b") },
+      "label":                { fg: RGBA.fromHex("#e06c75") },
+      "namespace":            { fg: RGBA.fromHex("#e5c07b") },
+      "module":               { fg: RGBA.fromHex("#e5c07b") },
+
+      "tag":                  { fg: RGBA.fromHex("#e06c75") },
+      "tag.attribute":        { fg: RGBA.fromHex("#d19a66") },
+      "tag.delimiter":        { fg: RGBA.fromHex("#abb2bf") },
+
+      "text":                 { fg: RGBA.fromHex("#abb2bf") },
+      "text.title":           { fg: RGBA.fromHex("#e06c75"), bold: true },
+      "text.uri":             { fg: RGBA.fromHex("#61afef"), underline: true },
+      "text.emphasis":        { italic: true },
+      "text.strong":          { bold: true },
+
+      "default":              { fg: RGBA.fromHex("#abb2bf") },
+    })
   }
-}
-
-function formatLineNumber(n: number | undefined, width: number): string {
-  if (n === undefined) return " ".repeat(width)
-  return String(n).padStart(width, " ")
-}
-
-const UnifiedView = (props: { lines: DiffLine[]; selectedHunkIndex: number }) => {
-  let currentHunk = -1
-
-  return (
-    <scrollbox width="100%" height="100%">
-      <box flexDirection="column" width="100%">
-        <For each={props.lines}>
-          {(line) => {
-            if (line.type === "header") currentHunk++
-            const isActiveHunk = currentHunk === props.selectedHunkIndex
-
-            return (
-              <box
-                flexDirection="row"
-                width="100%"
-                bg={
-                  isActiveHunk && line.type === "header"
-                    ? "#1a1a3e"
-                    : LINE_BG[line.type]
-                }
-              >
-                <text fg="#555555" width={5}>
-                  {formatLineNumber(line.oldLineNumber, 4)}
-                </text>
-                <text fg="#555555" width={5}>
-                  {formatLineNumber(line.newLineNumber, 4)}
-                </text>
-                <text fg={LINE_COLORS[line.type]}>
-                  {linePrefix(line.type)}{line.content}
-                </text>
-              </box>
-            )
-          }}
-        </For>
-      </box>
-    </scrollbox>
-  )
-}
-
-const SplitView = (props: { file: FileDiff }) => {
-  const splitLines = createMemo(() => {
-    const pairs: Array<{ left: DiffLine | null; right: DiffLine | null }> = []
-
-    for (const hunk of props.file.hunks) {
-      pairs.push({ left: { type: "header", content: hunk.header }, right: { type: "header", content: hunk.header } })
-
-      const removes: DiffLine[] = []
-      const adds: DiffLine[] = []
-
-      for (const line of hunk.lines) {
-        if (line.type === "remove") {
-          removes.push(line)
-        } else if (line.type === "add") {
-          adds.push(line)
-        } else {
-          // flush paired removes/adds
-          const max = Math.max(removes.length, adds.length)
-          for (let i = 0; i < max; i++) {
-            pairs.push({
-              left: removes[i] ?? null,
-              right: adds[i] ?? null,
-            })
-          }
-          removes.length = 0
-          adds.length = 0
-          pairs.push({ left: line, right: line })
-        }
-      }
-
-      const max = Math.max(removes.length, adds.length)
-      for (let i = 0; i < max; i++) {
-        pairs.push({
-          left: removes[i] ?? null,
-          right: adds[i] ?? null,
-        })
-      }
-    }
-
-    return pairs
-  })
-
-  return (
-    <scrollbox width="100%" height="100%">
-      <box flexDirection="column" width="100%">
-        <For each={splitLines()}>
-          {(pair) => (
-            <box flexDirection="row" width="100%">
-              <box width="50%" flexDirection="row">
-                <text fg="#555555" width={5}>
-                  {formatLineNumber(pair.left?.oldLineNumber, 4)}
-                </text>
-                <text
-                  fg={pair.left ? LINE_COLORS[pair.left.type] : "#333333"}
-                  bg={pair.left ? LINE_BG[pair.left.type] : undefined}
-                  flexGrow={1}
-                >
-                  {pair.left ? `${linePrefix(pair.left.type)}${pair.left.content}` : ""}
-                </text>
-              </box>
-              <text fg="#333333" width={1}>|</text>
-              <box flexGrow={1} flexDirection="row">
-                <text fg="#555555" width={5}>
-                  {formatLineNumber(pair.right?.newLineNumber, 4)}
-                </text>
-                <text
-                  fg={pair.right ? LINE_COLORS[pair.right.type] : "#333333"}
-                  bg={pair.right ? LINE_BG[pair.right.type] : undefined}
-                  flexGrow={1}
-                >
-                  {pair.right ? `${linePrefix(pair.right.type)}${pair.right.content}` : ""}
-                </text>
-              </box>
-            </box>
-          )}
-        </For>
-      </box>
-    </scrollbox>
-  )
+  return _syntaxStyle
 }
 
 export const DiffViewer = (props: DiffViewerProps) => {
-  const allLines = createMemo(() => {
-    if (!props.file) return []
-    return flattenHunkLines(props.file.hunks)
+  const filetype = createMemo(() => {
+    if (!props.file) return undefined
+    return filetypeFromPath(props.file.newPath)
+  })
+
+  const rawDiff = createMemo(() => {
+    if (!props.file) return ""
+    return props.file.rawDiff
   })
 
   return (
@@ -180,18 +115,29 @@ export const DiffViewer = (props: DiffViewerProps) => {
                 {" "}{file().newPath}
               </text>
               <text fg="#888888">
-                {" "}({props.viewMode})
+                {" "}({props.viewMode}){filetype() ? ` [${filetype()}]` : ""}
               </text>
             </box>
             <Show when={file().isBinary}>
               <text fg="#FF4444">Binary file differs</text>
             </Show>
-            <Show when={!file().isBinary}>
-              <Show when={props.viewMode === "unified"} fallback={
-                <SplitView file={file()} />
-              }>
-                <UnifiedView lines={allLines()} selectedHunkIndex={props.selectedHunkIndex} />
-              </Show>
+            <Show when={!file().isBinary && rawDiff()}>
+              <diff
+                diff={rawDiff()}
+                view={props.viewMode}
+                filetype={filetype()}
+                syntaxStyle={getSyntaxStyle()}
+                showLineNumbers={true}
+                selectable
+                flexGrow={1}
+                width="100%"
+                addedBg="#002200"
+                removedBg="#220000"
+                addedSignColor="#00FF00"
+                removedSignColor="#FF4444"
+                lineNumberFg="#555555"
+                wrapMode="none"
+              />
             </Show>
           </>
         )}

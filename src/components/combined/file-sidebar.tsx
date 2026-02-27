@@ -16,8 +16,8 @@ const InlineDiffPreview = (props: { file: FileDiff }) => {
   })
 
   return (
-    <box flexDirection="column" width="100%" paddingLeft={1} borderStyle="single" borderColor="#333333">
-      <text fg="#555555" bold>
+    <box flexDirection="column" width="100%" paddingLeft={1} borderStyle="single" borderColor="#333333" selectable>
+      <text fg="#555555" bold selectable>
         {props.file.newPath}
       </text>
       <For each={previewLines()}>
@@ -33,7 +33,7 @@ const InlineDiffPreview = (props: { file: FileDiff }) => {
           const prefix = line.type === "add" ? "+" : line.type === "remove" ? "-" : line.type === "header" ? "@" : " "
 
           return (
-            <text fg={color}>
+            <text fg={color} selectable>
               {prefix}{line.content.slice(0, 50)}
             </text>
           )

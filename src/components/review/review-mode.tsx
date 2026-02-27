@@ -1,8 +1,9 @@
-import { createSignal, createEffect, onMount } from "solid-js"
+import { createSignal, createEffect, onMount, onCleanup } from "solid-js"
 import { useKeyboard } from "@opentui/solid"
 import { useGitDiff, type DiffSource } from "../../hooks/use-git"
 import { useDiffNavigation } from "../../hooks/use-diff"
 import { GitService } from "../../core/git"
+import { updateDiffContext, clearDiffContext } from "../../core/diff-context"
 import { SplitPane } from "../layout/split-pane"
 import { FileTree } from "./file-tree"
 import { DiffViewer } from "./diff-viewer"
@@ -22,8 +23,37 @@ export const ReviewMode = () => {
     fetchDiff()
   })
 
+  createEffect(() => {
+    const files = diffs()
+    const src = diffSource()
+    if (files.length > 0) {
+      updateDiffContext(files, src.type)
+    } else {
+      clearDiffContext()
+    }
+  })
+
+  onCleanup(() => {
+    clearDiffContext()
+  })
+
   useKeyboard((key) => {
     if (key.ctrl || key.meta) return
+
+    if (key.shift) {
+      switch (key.name) {
+        case "n":
+          nav.prevHunk()
+          break
+        case "r":
+          fetchDiff()
+          break
+        case "s":
+          setDiffSource({ type: "staged" })
+          break
+      }
+      return
+    }
 
     switch (key.name) {
       case "j":
@@ -37,9 +67,6 @@ export const ReviewMode = () => {
       case "n":
         nav.nextHunk()
         break
-      case "N":
-        nav.prevHunk()
-        break
       case "u":
         nav.toggleViewMode()
         break
@@ -52,14 +79,8 @@ export const ReviewMode = () => {
       case "s":
         handleToggleStaged()
         break
-      case "R":
-        fetchDiff()
-        break
       case "w":
         setDiffSource({ type: "working" })
-        break
-      case "S":
-        setDiffSource({ type: "staged" })
         break
     }
   })

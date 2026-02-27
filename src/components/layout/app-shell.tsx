@@ -20,14 +20,12 @@ export const AppShell = (props: AppShellProps) => {
       return
     }
 
-    if (key.ctrl && key.name === "?") {
+    if (key.ctrl && (key.name === "?" || (key.name === "/" && key.shift))) {
       props.onToggleHelp()
       return
     }
 
-    if (key.ctrl && key.name === "c") {
-      process.exit(0)
-    }
+    // Ctrl+C is handled by OpenTUI's exitOnCtrlC (graceful teardown)
 
     if (!key.ctrl && !key.meta) {
       switch (key.name) {

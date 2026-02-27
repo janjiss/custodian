@@ -1,7 +1,12 @@
-import { existsSync, readFileSync } from "fs"
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs"
 import { join } from "path"
 import { homedir } from "os"
 import type { Mode } from "../app"
+
+export interface ProviderConfig {
+  apiKey?: string
+  disabled?: boolean
+}
 
 export interface CustodianConfig {
   defaultMode: Mode
@@ -10,6 +15,7 @@ export interface CustodianConfig {
   opencode: {
     serverUrl: string
   }
+  providers: Record<string, ProviderConfig>
   git: {
     pollInterval: number
   }
@@ -23,6 +29,7 @@ const DEFAULT_CONFIG: CustodianConfig = {
   opencode: {
     serverUrl: "http://localhost:4096",
   },
+  providers: {},
   git: {
     pollInterval: 3000,
   },
@@ -64,6 +71,10 @@ function merge(base: CustodianConfig, overrides: Partial<CustodianConfig>): Cust
       ...base.opencode,
       ...(overrides.opencode ?? {}),
     },
+    providers: {
+      ...base.providers,
+      ...(overrides.providers ?? {}),
+    },
     git: {
       ...base.git,
       ...(overrides.git ?? {}),
@@ -97,4 +108,55 @@ export function getDataDir(): string {
     Bun.spawnSync(["mkdir", "-p", dir])
   }
   return dir
+}
+
+const MODEL_FILE = "last-model.json"
+const SESSION_FILE = "last-session.json"
+
+export function saveLastModel(providerID: string, modelID: string): void {
+  const path = join(getDataDir(), MODEL_FILE)
+  writeFileSync(path, JSON.stringify({ providerID, modelID }))
+}
+
+export function loadLastModel(): { providerID: string; modelID: string } | null {
+  const path = join(getDataDir(), MODEL_FILE)
+  try {
+    if (!existsSync(path)) return null
+    const data = JSON.parse(readFileSync(path, "utf-8"))
+    if (data?.providerID && data?.modelID) return data
+    return null
+  } catch {
+    return null
+  }
+}
+
+export function clearLastModel(): void {
+  const path = join(getDataDir(), MODEL_FILE)
+  try {
+    if (existsSync(path)) unlinkSync(path)
+  } catch {}
+}
+
+export function saveLastSessionId(sessionId: string): void {
+  const path = join(getDataDir(), SESSION_FILE)
+  writeFileSync(path, JSON.stringify({ sessionId }))
+}
+
+export function loadLastSessionId(): string | null {
+  const path = join(getDataDir(), SESSION_FILE)
+  try {
+    if (!existsSync(path)) return null
+    const data = JSON.parse(readFileSync(path, "utf-8"))
+    if (typeof data?.sessionId === "string" && data.sessionId.trim()) return data.sessionId
+    return null
+  } catch {
+    return null
+  }
+}
+
+export function clearLastSessionId(): void {
+  const path = join(getDataDir(), SESSION_FILE)
+  try {
+    if (existsSync(path)) unlinkSync(path)
+  } catch {}
 }

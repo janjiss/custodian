@@ -24,9 +24,10 @@ export interface FileDiff {
   additions: number
   deletions: number
   isBinary: boolean
+  rawDiff: string
 }
 
-const DIFF_HEADER_RE = /^diff --git a\/(.+) b\/(.+)$/
+const DIFF_HEADER_RE = /^diff --git \w\/(.+) \w\/(.+)$/
 const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/
 const RENAME_FROM_RE = /^rename from (.+)$/
 const RENAME_TO_RE = /^rename to (.+)$/
@@ -43,13 +44,18 @@ export function parseDiff(raw: string): FileDiff[] {
   let currentHunk: Hunk | null = null
   let oldLine = 0
   let newLine = 0
+  let fileStartLine = 0
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
 
     const headerMatch = line.match(DIFF_HEADER_RE)
     if (headerMatch) {
-      if (current) files.push(current)
+      if (current) {
+        current.rawDiff = lines.slice(fileStartLine, i).join("\n")
+        files.push(current)
+      }
+      fileStartLine = i
       current = {
         oldPath: headerMatch[1],
         newPath: headerMatch[2],
@@ -58,6 +64,7 @@ export function parseDiff(raw: string): FileDiff[] {
         additions: 0,
         deletions: 0,
         isBinary: false,
+        rawDiff: "",
       }
       currentHunk = null
       continue
@@ -144,7 +151,10 @@ export function parseDiff(raw: string): FileDiff[] {
     }
   }
 
-  if (current) files.push(current)
+  if (current) {
+    current.rawDiff = lines.slice(fileStartLine).join("\n")
+    files.push(current)
+  }
 
   return files
 }
@@ -171,4 +181,51 @@ export function flattenHunkLines(hunks: Hunk[]): DiffLine[] {
     { type: "header" as const, content: h.header },
     ...h.lines,
   ])
+}
+
+const EXT_TO_FILETYPE: Record<string, string> = {
+  ts: "typescript",
+  tsx: "typescript",
+  js: "javascript",
+  jsx: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
+  py: "python",
+  rb: "ruby",
+  go: "go",
+  rs: "rust",
+  java: "java",
+  kt: "kotlin",
+  swift: "swift",
+  c: "c",
+  h: "c",
+  cpp: "cpp",
+  hpp: "cpp",
+  cs: "csharp",
+  php: "php",
+  lua: "lua",
+  zig: "zig",
+  md: "markdown",
+  json: "json",
+  yaml: "yaml",
+  yml: "yaml",
+  toml: "toml",
+  html: "html",
+  css: "css",
+  scss: "css",
+  sh: "bash",
+  bash: "bash",
+  zsh: "bash",
+  sql: "sql",
+  xml: "xml",
+  vue: "vue",
+  svelte: "svelte",
+  ex: "elixir",
+  exs: "elixir",
+}
+
+export function filetypeFromPath(path: string): string | undefined {
+  const ext = path.split(".").pop()?.toLowerCase()
+  if (!ext) return undefined
+  return EXT_TO_FILETYPE[ext]
 }

@@ -2,6 +2,8 @@ import { render } from "@opentui/solid"
 import { App } from "./app"
 import { getConfig } from "./core/config"
 import { getDb } from "./db/migrate"
+import { getAgentClient } from "./core/agent"
+import { ThemeProvider } from "./theme/engine"
 
 const args = process.argv.slice(2)
 
@@ -13,18 +15,22 @@ Usage: custodian [options]
 
 Options:
   -c, --cwd <path>    Set working directory
-  -m, --mode <mode>   Start in mode: review, agent, combined
+  --login             Open provider login on startup
   -h, --help          Show this help
   -v, --version       Show version
 
-Modes:
-  review    - Full-screen diff review (git changes & agent changes)
-  agent     - Chat with AI agent (connects to opencode server)
-  combined  - Split view: file changes + agent chat
+Authentication:
+  Set OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY
+  as environment variables, or use Ctrl+L to login interactively.
+
+Layout:
+  Three-pane view: Files | Diff | Chat
+  Chat pane appears when files are added to context.
 
 Keyboard:
-  Tab          Cycle between modes
-  1 / 2 / 3   Jump to Review / Agent / Combined
+  Tab          Cycle pane focus
+  f            Expand/collapse focused pane
+  Space        Toggle file in chat context
   Ctrl+?       Toggle help overlay
   Ctrl+C       Quit
 `)
@@ -44,4 +50,15 @@ if (cwdIdx >= 0 && args[cwdIdx + 1]) {
 getConfig()
 getDb()
 
-render(App)
+const cleanup = () => {
+  try { getAgentClient().shutdown() } catch {}
+}
+process.on("exit", cleanup)
+process.on("SIGINT", () => { cleanup(); process.exit(0) })
+process.on("SIGTERM", () => { cleanup(); process.exit(0) })
+
+render(() => (
+  <ThemeProvider>
+    <App />
+  </ThemeProvider>
+))

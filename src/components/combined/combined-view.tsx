@@ -1,8 +1,9 @@
-import { createSignal, createEffect, onMount, Show } from "solid-js"
+import { createSignal, createEffect, onMount, onCleanup, Show } from "solid-js"
 import { useKeyboard } from "@opentui/solid"
 import { useAgent } from "../../hooks/use-agent"
 import { useGitDiff, type DiffSource } from "../../hooks/use-git"
 import { useDiffNavigation } from "../../hooks/use-diff"
+import { updateDiffContext, clearDiffContext } from "../../core/diff-context"
 import { SplitPane } from "../layout/split-pane"
 import { FileSidebar } from "./file-sidebar"
 import { Chat } from "../agent/chat"
@@ -23,10 +24,22 @@ export const CombinedMode = () => {
     fetchDiff()
   })
 
-  // Re-fetch diffs when agent events indicate file changes
   createEffect(() => {
     agent.messages()
     fetchDiff()
+  })
+
+  createEffect(() => {
+    const files = diffs()
+    if (files.length > 0) {
+      updateDiffContext(files, "working")
+    } else {
+      clearDiffContext()
+    }
+  })
+
+  onCleanup(() => {
+    clearDiffContext()
   })
 
   useKeyboard((key) => {
@@ -101,7 +114,9 @@ export const CombinedMode = () => {
         </Show>
       </box>
 
-      <Chat messages={agent.messages()} isStreaming={agent.isStreaming()} />
+      <box flexGrow={1} minHeight={0} width="100%" overflow="hidden">
+        <Chat messages={agent.messages()} isStreaming={agent.isStreaming()} />
+      </box>
 
       <MessageInput
         onSend={(content) => agent.sendMessage(content)}

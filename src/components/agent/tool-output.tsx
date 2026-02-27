@@ -24,8 +24,8 @@ export const ToolOutput = (props: ToolOutputProps) => {
         </Show>
       </box>
       <Show when={props.toolCall.output}>
-        <box paddingTop={1}>
-          <text fg="#cccccc" wrap="word">
+        <box paddingTop={1} selectable>
+          <text fg="#cccccc" wrap="word" selectable>
             {props.toolCall.output}
           </text>
         </box>

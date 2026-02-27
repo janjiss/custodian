@@ -1,13 +1,37 @@
-import { createSignal, Show } from "solid-js"
+import { createSignal, createEffect, onMount, onCleanup, Show } from "solid-js"
 import { useKeyboard } from "@opentui/solid"
 import { useAgent } from "../../hooks/use-agent"
+import { useGitDiff, type DiffSource } from "../../hooks/use-git"
+import { updateDiffContext, clearDiffContext } from "../../core/diff-context"
 import { Chat } from "./chat"
 import { MessageInput } from "./message-input"
 import { SessionDialog } from "./session-dialog"
+import { LoginDialog } from "./login-dialog"
 
 export const AgenticMode = () => {
   const agent = useAgent()
   const [showSessions, setShowSessions] = createSignal(false)
+  const [showLogin, setShowLogin] = createSignal(false)
+
+  const [diffSource] = createSignal<DiffSource>({ type: "working" })
+  const { diffs, fetchDiff } = useGitDiff(diffSource)
+
+  onMount(() => {
+    fetchDiff()
+  })
+
+  createEffect(() => {
+    const files = diffs()
+    if (files.length > 0) {
+      updateDiffContext(files, "working")
+    } else {
+      clearDiffContext()
+    }
+  })
+
+  onCleanup(() => {
+    clearDiffContext()
+  })
 
   useKeyboard((key) => {
     if (key.ctrl) {
@@ -20,6 +44,12 @@ export const AgenticMode = () => {
           break
         case "x":
           agent.cancel()
+          break
+        case "l":
+          setShowLogin((v) => !v)
+          break
+        case "r":
+          fetchDiff()
           break
       }
     }
@@ -35,6 +65,7 @@ export const AgenticMode = () => {
             : " No session"}
         </text>
         <box flexGrow={1} />
+        <text fg="#888888"> Ctrl+L:login </text>
         <Show when={agent.connected()}>
           <text fg="#00FF00"> connected </text>
         </Show>
@@ -49,7 +80,9 @@ export const AgenticMode = () => {
         </box>
       </Show>
 
-      <Chat messages={agent.messages()} isStreaming={agent.isStreaming()} />
+      <box flexGrow={1} minHeight={0} width="100%" overflow="hidden">
+        <Chat messages={agent.messages()} isStreaming={agent.isStreaming()} />
+      </box>
 
       <MessageInput
         onSend={(content) => agent.sendMessage(content)}
@@ -69,6 +102,13 @@ export const AgenticMode = () => {
             agent.createSession()
             setShowSessions(false)
           }}
+        />
+      </Show>
+
+      <Show when={showLogin()}>
+        <LoginDialog
+          onClose={() => setShowLogin(false)}
+          onAuthenticated={() => setShowLogin(false)}
         />
       </Show>
     </box>
