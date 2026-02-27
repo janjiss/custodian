@@ -8,8 +8,7 @@ export const App = () => {
 
   useKeyboard((key) => {
     const name = String(key.name ?? "").toLowerCase()
-    const alt = key.meta || (key as any).alt === true
-    if ((alt && (name === "?" || (name === "/" && key.shift))) || (key.ctrl && (name === "?" || (name === "/" && key.shift)))) {
+    if (key.ctrl && (name === "?" || (name === "/" && key.shift))) {
       setShowHelp((v) => !v)
     }
   })

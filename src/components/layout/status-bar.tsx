@@ -5,10 +5,12 @@ interface StatusBarProps {
   modelLabel?: string
   connected?: boolean
   streaming?: boolean
+  leaderLabel?: string
 }
 
 export const StatusBar = (props: StatusBarProps) => {
   const theme = useTheme()
+  const leader = props.leaderLabel ?? "Ctrl+G"
   return (
     <box flexDirection="column" width="100%" height={2}>
       <box flexDirection="row" width="100%" height={1}>
@@ -36,7 +38,7 @@ export const StatusBar = (props: StatusBarProps) => {
 
       <box flexDirection="row" width="100%" height={1}>
         <text fg={theme.color("textMuted")}>
-          {" "}esc stop  panes: alt+. / alt+enter  resize: alt+[ or alt+]  alt+s sessions  alt+m model  alt+r refresh  alt+? help
+          {` esc stop  leader: ${leader}  ${leader}+s sessions  ${leader}+. pane  ${leader}+[ / ${leader}+] resize  ctrl+? help`}
         </text>
       </box>
     </box>

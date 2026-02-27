@@ -95,7 +95,7 @@ export const ModelSelector = (props: ModelSelectorProps) => {
         break
       }
       case "d":
-        if (key.meta || (key as any).alt === true) {
+        if (key.ctrl) {
           props.onClear()
           props.onClose()
         }
@@ -157,7 +157,7 @@ export const ModelSelector = (props: ModelSelectorProps) => {
         <box flexDirection="column" width="100%" marginTop={1} padding={1}>
           <text fg={theme.color("error")} bold>No authorized providers</text>
           <text fg={theme.color("textMuted")} marginTop={1}>
-            Press Alt+L to open the login dialog and authorize a provider.
+            Open login from the main view (leader + l) to authorize providers.
           </text>
           <Show when={disconnectedProviders().length > 0}>
             <text fg={theme.color("textMuted")} marginTop={1}>
@@ -209,7 +209,7 @@ export const ModelSelector = (props: ModelSelectorProps) => {
 
       <box height={1} width="100%">
         <text fg={theme.color("textMuted")}>
-          ↑↓ select  enter confirm  alt+d clear  {filtered().length} models
+          ↑↓ select  enter confirm  ctrl+d clear  {filtered().length} models
         </text>
       </box>
     </box>

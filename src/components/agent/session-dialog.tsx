@@ -42,7 +42,7 @@ export const SessionDialog = (props: SessionDialogProps) => {
         }
         break
       case "n":
-        if (key.meta || (key as any).alt === true) props.onCreate()
+        if (key.ctrl) props.onCreate()
         break
       case "escape":
         props.onClose()
@@ -86,7 +86,7 @@ export const SessionDialog = (props: SessionDialogProps) => {
       </box>
       <Show
         when={filteredSessions().length > 0}
-        fallback={<text fg={theme.color("textMuted")}>No sessions. Press Alt+N to create one.</text>}
+        fallback={<text fg={theme.color("textMuted")}>No sessions. Press Ctrl+N to create one.</text>}
       >
         <scrollbox flexGrow={1} width="100%">
           <box flexDirection="column" width="100%">
@@ -119,7 +119,7 @@ export const SessionDialog = (props: SessionDialogProps) => {
         </scrollbox>
       </Show>
       <box flexDirection="row" width="100%" marginTop={1}>
-        <text fg={theme.color("textMuted")}>↑↓ select  enter confirm  alt+n new</text>
+        <text fg={theme.color("textMuted")}>↑↓ select  enter confirm  ctrl+n new</text>
       </box>
     </box>
     </box>

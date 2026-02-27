@@ -1,4 +1,4 @@
-import { createSignal, createEffect, createMemo, onMount, For, Show } from "solid-js"
+import { createSignal, createEffect, createMemo, onMount, onCleanup, For, Show } from "solid-js"
 import { useKeyboard } from "@opentui/solid"
 import { useAgent } from "../hooks/use-agent"
 import { useGitDiff, type DiffSource } from "../hooks/use-git"
@@ -17,6 +17,7 @@ import { SessionDialog } from "./agent/session-dialog"
 import { LoginDialog } from "./agent/login-dialog"
 import { statusChar, formatStats } from "../core/diff"
 import { useTheme } from "../theme/engine"
+import { getLeaderConfig, keyMatches } from "../core/keybindings"
 
 export const UnifiedView = () => {
   const theme = useTheme()
@@ -35,6 +36,9 @@ export const UnifiedView = () => {
   const [showLogin, setShowLogin] = createSignal(false)
   const [showThinking, setShowThinking] = createSignal(true)
   const [showToolDetails, setShowToolDetails] = createSignal(true)
+  const [leaderArmed, setLeaderArmed] = createSignal(false)
+  const leader = getLeaderConfig()
+  let leaderTimer: ReturnType<typeof setTimeout> | null = null
 
   const diffVisible = createMemo(() => nav.selectedFile() !== null)
   const topPermission = createMemo(() => agent.pendingPermissions()[0] ?? null)
@@ -48,6 +52,10 @@ export const UnifiedView = () => {
 
   onMount(() => {
     fetchDiff()
+  })
+
+  onCleanup(() => {
+    if (leaderTimer) clearTimeout(leaderTimer)
   })
 
   createEffect(() => {
@@ -94,6 +102,20 @@ export const UnifiedView = () => {
       return
     }
     agent.runCommand(command)
+  }
+
+  const armLeader = () => {
+    setLeaderArmed(true)
+    if (leaderTimer) clearTimeout(leaderTimer)
+    leaderTimer = setTimeout(() => setLeaderArmed(false), leader.timeoutMs)
+  }
+
+  const disarmLeader = () => {
+    setLeaderArmed(false)
+    if (leaderTimer) {
+      clearTimeout(leaderTimer)
+      leaderTimer = null
+    }
   }
 
   const cycleFocus = () => {
@@ -161,48 +183,74 @@ export const UnifiedView = () => {
 
   useKeyboard((key) => {
     const name = String(key.name ?? "").toLowerCase()
-    const alt = key.meta || (key as any).alt === true
 
     if (showModelSelector() || showSessions() || showLogin()) return
 
+    if (keyMatches(leader.combo, key as any)) {
+      armLeader()
+      return
+    }
+
+    if (leaderArmed()) {
+      disarmLeader()
+      switch (name) {
+        case "s":
+          agent.refreshSessions()
+          setShowSessions(true)
+          return
+        case "m":
+          setShowModelSelector(true)
+          return
+        case "l":
+          setShowLogin(true)
+          return
+        case "r":
+          fetchDiff()
+          return
+        case "k":
+          agent.compact()
+          return
+        case "t":
+          setShowThinking((v) => !v)
+          return
+        case "y":
+          setShowToolDetails((v) => !v)
+          return
+        case "n":
+          agent.createSession()
+          return
+        case ".":
+          cycleFocus()
+          return
+        case "return":
+          toggleExpand()
+          return
+        case "[":
+          resizeFocusedPane(-5)
+          return
+        case "]":
+          resizeFocusedPane(5)
+          return
+      }
+    }
+
     if (name === "escape") {
+      disarmLeader()
       if (agent.isStreaming() || topPermission() !== null || topQuestion() !== null) {
         agent.cancel()
       }
       return
     }
 
-    // Pane controls: Alt-first to avoid readline Ctrl conflicts.
-    if (alt && name === ".") {
-      cycleFocus()
-      return
-    }
-
-    if (alt && name === "return") {
-      toggleExpand()
-      return
-    }
-
-    if (alt && name === "]") {
-      resizeFocusedPane(5)
-      return
-    }
-
-    if (alt && name === "[") {
-      resizeFocusedPane(-5)
-      return
-    }
-
-    // Keep terminal-dependent fallbacks where Alt may be intercepted.
+    // Fallbacks for terminals with poor modifier support.
     const ctrlTabLike = key.ctrl && (name === "tab" || name === "i")
-    if (ctrlTabLike || (alt && name === "tab")) {
+    if (ctrlTabLike) {
       cycleFocus()
       return
     }
 
     if (
       (key.ctrl && (name === "e" || name === "g")) ||
-      (alt && name === "e") ||
       (key.ctrl && key.shift && name === "f")
     ) {
       toggleExpand()
@@ -211,7 +259,6 @@ export const UnifiedView = () => {
 
     if (
       (key.ctrl && key.shift && (name === "h" || name === "left")) ||
-      (alt && name === "left") ||
       (key.ctrl && (name === "[" || name === ","))
     ) {
       resizeFocusedPane(-5)
@@ -220,41 +267,10 @@ export const UnifiedView = () => {
 
     if (
       (key.ctrl && key.shift && (name === "l" || name === "right")) ||
-      (alt && name === "right") ||
       (key.ctrl && (name === "]" || name === "."))
     ) {
       resizeFocusedPane(5)
       return
-    }
-
-    if (alt) {
-      switch (name) {
-      case "s":
-        agent.refreshSessions()
-        setShowSessions(true)
-        return
-      case "m":
-        setShowModelSelector(true)
-        return
-      case "l":
-        setShowLogin(true)
-        return
-      case "r":
-        fetchDiff()
-        return
-      case "k":
-        agent.compact()
-        return
-      case "t":
-        setShowThinking((v) => !v)
-        return
-      case "y":
-        setShowToolDetails((v) => !v)
-        return
-      case "n":
-        agent.createSession()
-        return
-      }
     }
 
     if (key.ctrl) {
@@ -593,6 +609,7 @@ export const UnifiedView = () => {
         modelLabel={modelLabel()}
         connected={agent.connected()}
         streaming={agent.isStreaming()}
+        leaderLabel={leader.label}
       />
     </box>
   )

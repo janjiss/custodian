@@ -1,93 +1,99 @@
 import { useKeyboard } from "@opentui/solid"
+import { getLeaderConfig } from "../../core/keybindings"
 
 interface HelpOverlayProps {
   onClose: () => void
 }
 
-const HELP_SECTIONS = [
-  {
-    title: "Global",
-    bindings: [
-      ["Alt+? / Ctrl+?", "Toggle help"],
-      ["Esc", "Cancel streaming / active prompt"],
-      ["Ctrl+C", "Quit"],
-    ],
-  },
-  {
-    title: "Panes",
-    bindings: [
-      ["Alt+.", "Cycle pane focus (Files → Chat → Diff)"],
-      ["Alt+Enter", "Expand / collapse focused pane"],
-      ["Alt+[ / Alt+]", "Resize focused pane -/+"],
-      ["Ctrl+Tab / Alt+Tab", "Cycle pane focus (fallback)"],
-      ["Ctrl+[ / Ctrl+]", "Resize focused pane (fallback)"],
-    ],
-  },
-  {
-    title: "Files Pane",
-    bindings: [
-      ["j / k / Up / Down", "Navigate files"],
-      ["Space / Enter", "Toggle file in chat context"],
-      ["Shift+A", "Add all files to context"],
-      ["Shift+C", "Clear context"],
-      ["a", "Stage file"],
-      ["r", "Revert file"],
-      ["s", "Toggle staged / unstaged"],
-      ["w / Shift+S", "Working tree / staged diffs"],
-    ],
-  },
-  {
-    title: "Diff Pane",
-    bindings: [
-      ["j / k / Up / Down", "Navigate files"],
-      ["n / Shift+N", "Next / previous hunk"],
-      ["u", "Toggle unified / split view"],
-    ],
-  },
-  {
-    title: "Chat & Agent",
-    bindings: [
-      ["Enter / Shift+Enter", "Send message / newline"],
-      ["/", "Slash commands (type / then filter)"],
-      ["Tab", "Autocomplete selected slash command"],
-      ["Ctrl+P / Ctrl+N", "Input history and menu navigation"],
-      ["Ctrl+D", "Toggle diff context in messages"],
-      ["Ctrl+X", "Cancel generation / current task"],
-      ["Alt+S / /sessions", "Session switcher"],
-      ["Alt+M", "Model selector"],
-      ["Alt+L", "Provider login"],
-      ["Alt+R", "Refresh diffs"],
-      ["Alt+K", "Compact session"],
-      ["Alt+T / Alt+Y", "Toggle thinking / tool details"],
-      ["Alt+N", "New session"],
-    ],
-  },
-  {
-    title: "Permission Prompts",
-    bindings: [
-      ["y", "Approve once"],
-      ["a", "Approve always"],
-      ["n", "Reject"],
-      ["Left / Right (h / l)", "Change selection"],
-      ["Enter", "Confirm selected option"],
-    ],
-  },
-  {
-    title: "Question Prompts",
-    bindings: [
-      ["Left / Right / Up / Down", "Change selection"],
-      ["h / l / k / j", "Vim-style selection"],
-      ["Enter", "Submit selected answer"],
-      ["Esc", "Reject question"],
-    ],
-  },
-]
-
 export const HelpOverlay = (props: HelpOverlayProps) => {
+  const leader = getLeaderConfig().label
+  const helpSections = [
+    {
+      title: "Global",
+      bindings: [
+        ["Ctrl+?", "Toggle help"],
+        ["Esc", "Cancel streaming / active prompt"],
+        ["Ctrl+C", "Quit"],
+      ],
+    },
+    {
+      title: "Leader",
+      bindings: [
+        [`${leader} s`, "Session switcher (/sessions)"],
+        [`${leader} n`, "New session"],
+        [`${leader} m`, "Model selector"],
+        [`${leader} l`, "Provider login"],
+        [`${leader} r`, "Refresh diffs"],
+        [`${leader} k`, "Compact session"],
+        [`${leader} t / ${leader} y`, "Toggle thinking / tool details"],
+      ],
+    },
+    {
+      title: "Panes",
+      bindings: [
+        [`${leader} .`, "Cycle pane focus (Files -> Chat -> Diff)"],
+        [`${leader} Enter`, "Expand / collapse focused pane"],
+        [`${leader} [ / ${leader} ]`, "Resize focused pane -/+"],
+        ["Ctrl+Tab", "Cycle pane focus (fallback)"],
+        ["Ctrl+[ / Ctrl+]", "Resize focused pane (fallback)"],
+      ],
+    },
+    {
+      title: "Files Pane",
+      bindings: [
+        ["j / k / Up / Down", "Navigate files"],
+        ["Space / Enter", "Toggle file in chat context"],
+        ["Shift+A", "Add all files to context"],
+        ["Shift+C", "Clear context"],
+        ["a", "Stage file"],
+        ["r", "Revert file"],
+        ["s", "Toggle staged / unstaged"],
+        ["w / Shift+S", "Working tree / staged diffs"],
+      ],
+    },
+    {
+      title: "Diff Pane",
+      bindings: [
+        ["j / k / Up / Down", "Navigate files"],
+        ["n / Shift+N", "Next / previous hunk"],
+        ["u", "Toggle unified / split view"],
+      ],
+    },
+    {
+      title: "Chat & Agent",
+      bindings: [
+        ["Enter / Shift+Enter", "Send message / newline"],
+        ["/", "Slash commands (type / then filter)"],
+        ["Tab", "Autocomplete selected slash command"],
+        ["Ctrl+P / Ctrl+N", "Input history and menu navigation"],
+        ["Ctrl+D", "Toggle diff context in messages"],
+        ["Ctrl+X", "Cancel generation / current task"],
+      ],
+    },
+    {
+      title: "Permission Prompts",
+      bindings: [
+        ["y", "Approve once"],
+        ["a", "Approve always"],
+        ["n", "Reject"],
+        ["Left / Right (h / l)", "Change selection"],
+        ["Enter", "Confirm selected option"],
+      ],
+    },
+    {
+      title: "Question Prompts",
+      bindings: [
+        ["Left / Right / Up / Down", "Change selection"],
+        ["h / l / k / j", "Vim-style selection"],
+        ["Enter", "Submit selected answer"],
+        ["Esc", "Reject question"],
+      ],
+    },
+  ]
+
   useKeyboard((key) => {
     const name = String(key.name ?? "").toLowerCase()
-    const alt = key.meta || (key as any).alt === true
-    if (name === "escape" || (alt && (name === "?" || (name === "/" && key.shift))) || (key.ctrl && (name === "?" || (name === "/" && key.shift)))) {
+    if (name === "escape" || (key.ctrl && (name === "?" || (name === "/" && key.shift)))) {
       props.onClose()
     }
   })
@@ -112,7 +118,7 @@ export const HelpOverlay = (props: HelpOverlayProps) => {
       <text fg="#87CEEB" bold>
         Custodian -- Keyboard Shortcuts
       </text>
-      {HELP_SECTIONS.map((section) => (
+      {helpSections.map((section) => (
         <box flexDirection="column">
           <text fg="#FFFF00" bold>
             {section.title}
@@ -127,7 +133,7 @@ export const HelpOverlay = (props: HelpOverlayProps) => {
           ))}
         </box>
       ))}
-      <text fg="#666666">Press Esc, Alt+?, or Ctrl+? to close</text>
+      <text fg="#666666">Press Esc or Ctrl+? to close</text>
     </box>
     </box>
   )

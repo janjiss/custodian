@@ -19,7 +19,10 @@ export interface CustodianConfig {
   git: {
     pollInterval: number
   }
-  keybindings: Record<string, string>
+  keybindings: {
+    leader: string
+    leaderTimeoutMs: number
+  }
 }
 
 const DEFAULT_CONFIG: CustodianConfig = {
@@ -33,7 +36,10 @@ const DEFAULT_CONFIG: CustodianConfig = {
   git: {
     pollInterval: 3000,
   },
-  keybindings: {},
+  keybindings: {
+    leader: "ctrl+g",
+    leaderTimeoutMs: 1000,
+  },
 }
 
 function findConfigFile(): string | null {

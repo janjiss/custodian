@@ -28,10 +28,9 @@ Layout:
   Chat pane appears when files are added to context.
 
 Keyboard:
-  Tab          Cycle pane focus
-  f            Expand/collapse focused pane
-  Space        Toggle file in chat context
   Ctrl+?       Toggle help overlay
+  Ctrl+G then S/N/M/L/R/K/T/Y/.   Leader actions (configurable)
+  /sessions    Session picker slash command
   Ctrl+C       Quit
 `)
   process.exit(0)

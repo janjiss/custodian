@@ -50,20 +50,43 @@ Options:
   -v, --version       Show version
 ```
 
-## Keyboard (Alt-first)
+## Keyboard
 
-- `Alt+?` or `Ctrl+?`: help
+- `Ctrl+?`: help
 - `Esc`: cancel active generation/prompt
-- `Alt+S`: open sessions (`/sessions` also supported)
-- `Alt+N`: new session
-- `Alt+M`: model selector
-- `Alt+L`: provider login
-- `Alt+R`: refresh diffs
-- `Alt+K`: compact session
-- `Alt+T` / `Alt+Y`: toggle thinking/tool details
-- `Alt+.`: cycle focused pane
-- `Alt+Enter`: expand/collapse focused pane
-- `Alt+[` / `Alt+]`: resize focused pane
+- `/sessions`: open session picker from chat slash command
+- `Ctrl+Tab`: cycle focused pane (fallback)
+- `Ctrl+[ / Ctrl+]`: resize focused pane (fallback)
+
+## Configurable leader key
+
+Custodian reads config from `~/.config/custodian/config.json` (or `.custodian.json` in project root).
+
+You can configure the leader combo and timeout used for global shortcuts:
+
+```json
+{
+  "keybindings": {
+    "leader": "ctrl+g",
+    "leaderTimeoutMs": 1000
+  }
+}
+```
+
+Supported modifier tokens in `leader`: `ctrl`, `alt`, `shift`, `meta` (or `cmd`).
+
+Leader actions:
+
+- `<leader> s`: sessions
+- `<leader> n`: new session
+- `<leader> m`: model selector
+- `<leader> l`: login
+- `<leader> r`: refresh diffs
+- `<leader> k`: compact session
+- `<leader> t` / `<leader> y`: thinking/tool details
+- `<leader> .`: cycle pane
+- `<leader> Enter`: expand/collapse pane
+- `<leader> [` / `<leader> ]`: resize pane
 
 ## Session persistence
 
@@ -74,3 +97,31 @@ Options:
 
 - `dist/`, `node_modules/`, and `.custodian/` are git-ignored.
 - Use GitHub SSH remote: `git@github.com:janjiss/custodian.git`.
+
+## GitHub SSH setup
+
+If `git push` fails with `Permission denied (publickey)`, configure a dedicated key:
+
+```bash
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+ssh-keygen -t ed25519 -C "Janis Miezitis <janjiss@gmail.com>" -f ~/.ssh/id_ed25519_github_janjiss -N ""
+cat ~/.ssh/id_ed25519_github_janjiss.pub
+```
+
+Add the printed public key in GitHub: **Settings -> SSH and GPG keys -> New SSH key**.
+
+Then set SSH config so Git always uses the correct key:
+
+```sshconfig
+Host github.com
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/id_ed25519_github_janjiss
+  IdentitiesOnly yes
+```
+
+Optional first-connection check:
+
+```bash
+ssh -T git@github.com
+```
