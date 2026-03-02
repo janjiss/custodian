@@ -10,6 +10,7 @@ import (
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/janjiss/custodian/internal/review"
 )
 
 type lineType int
@@ -30,6 +31,7 @@ type threadInfo struct {
 	outdated  bool
 	lineStart int
 	lineEnd   int
+	comments  []review.Comment
 }
 
 type diffLine struct {
@@ -480,9 +482,12 @@ func renderCommentBlock(ti threadInfo, width int) string {
 		innerW = 20
 	}
 
-	body := ti.body
-	if len(body) > innerW-2 {
-		body = body[:innerW-5] + "..."
+	border := lipgloss.NewStyle().Foreground(commentBlockBorder)
+	bg := lipgloss.NewStyle().Background(commentBlockBg)
+
+	rangeLabel := ""
+	if ti.lineEnd > 0 && ti.lineEnd != ti.lineStart {
+		rangeLabel = fmt.Sprintf(" ln %d-%d ", ti.lineStart, ti.lineEnd)
 	}
 
 	statusIcon := "○"
@@ -491,37 +496,63 @@ func renderCommentBlock(ti threadInfo, width int) string {
 		statusIcon = "✓"
 		statusColor = threadDoneColor
 	}
-
 	meta := fmt.Sprintf("%s %s", statusIcon, ti.status)
-	if ti.count > 1 {
-		meta += fmt.Sprintf(" · %d comments", ti.count)
-	}
 	if ti.outdated {
 		meta += " · outdated"
 	}
 
-	border := lipgloss.NewStyle().Foreground(commentBlockBorder)
-	bg := lipgloss.NewStyle().Background(commentBlockBg)
-
-	rangeLabel := ""
-	if ti.lineEnd > 0 && ti.lineEnd != ti.lineStart {
-		rangeLabel = fmt.Sprintf(" ln %d-%d ", ti.lineStart, ti.lineEnd)
-	}
 	topBar := border.Render("  ╭─ 💬" + rangeLabel + " " + strings.Repeat("─", max(0, innerW-7-len(rangeLabel))) + "╮")
 
-	bodyLine := border.Render("  │") +
-		bg.Foreground(commentBodyColor).Width(innerW).MaxWidth(innerW).Render(" "+body) +
-		border.Render("│")
+	var lines []string
+	lines = append(lines, topBar)
+
+	comments := ti.comments
+	if len(comments) == 0 && ti.body != "" {
+		comments = []review.Comment{{Author: review.AuthorHuman, Body: ti.body}}
+	}
+
+	for i, c := range comments {
+		author := string(c.Author)
+		prefix := "  │"
+		if i > 0 {
+			sep := border.Render("  ├" + strings.Repeat("┈", innerW) + "┤")
+			lines = append(lines, sep)
+		}
+		authorLine := border.Render(prefix) +
+			bg.Foreground(commentMetaColor).Width(innerW).MaxWidth(innerW).Render(" "+author) +
+			border.Render("│")
+		lines = append(lines, authorLine)
+
+		body := c.Body
+		if len(body) > innerW-2 {
+			body = body[:innerW-5] + "..."
+		}
+		bodyLine := border.Render(prefix) +
+			bg.Foreground(commentBodyColor).Width(innerW).MaxWidth(innerW).Render(" "+body) +
+			border.Render("│")
+		lines = append(lines, bodyLine)
+	}
 
 	metaLine := border.Render("  │") +
 		bg.Foreground(statusColor).Width(innerW).MaxWidth(innerW).Render(" "+meta) +
 		border.Render("│")
+	lines = append(lines, metaLine)
 
 	bottomBar := border.Render("  ╰" + strings.Repeat("─", max(0, innerW)) + "╯")
+	lines = append(lines, bottomBar)
 
-	return topBar + "\n" + bodyLine + "\n" + metaLine + "\n" + bottomBar + "\n"
+	return strings.Join(lines, "\n") + "\n"
 }
 
-func commentBlockHeight(_ threadInfo) int {
-	return 4
+func commentBlockHeight(ti threadInfo) int {
+	n := len(ti.comments)
+	if n == 0 && ti.body != "" {
+		n = 1
+	}
+	// top + (author + body per comment) + separators between comments + meta + bottom
+	separators := 0
+	if n > 1 {
+		separators = n - 1
+	}
+	return 1 + n*2 + separators + 1 + 1
 }

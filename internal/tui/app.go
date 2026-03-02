@@ -75,15 +75,17 @@ type Model struct {
 	searchIdx     int
 
 	// Session & threads
-	session  *review.ReviewSession
-	threads  []review.Thread
-	threadWg int // monotonic counter for stale-thread detection
+	session        *review.ReviewSession
+	threads        []review.Thread
+	threadWg       int // monotonic counter for stale-thread detection
+	allComments    map[string][]review.Comment
 
 	// Thread panel
-	showThreads    bool
-	threadCursor   int
-	threadDetail   *review.Thread
-	threadComments []review.Comment
+	showThreads      bool
+	threadCursor     int
+	threadDetail     *review.Thread
+	threadComments   []review.Comment
+	inlineDetailOpen bool
 
 	// Comment creation
 	commentActive  bool
@@ -94,8 +96,9 @@ type Model struct {
 	visualStart    int
 
 	// Thread reply
-	replyActive bool
-	replyInput  string
+	replyActive      bool
+	replyInput       string
+	inlineReplyThread *review.Thread
 
 	// Delete confirmation
 	confirmDelete *review.Thread
@@ -135,10 +138,11 @@ type sessionMsg struct {
 }
 
 type threadsMsg struct {
-	threads  []review.Thread
-	filePath string
-	seq      int
-	err      error
+	threads    []review.Thread
+	comments   map[string][]review.Comment
+	filePath   string
+	seq        int
+	err        error
 }
 
 type commentCreatedMsg struct{ err error }
@@ -274,7 +278,15 @@ func (m Model) loadThreadsForFile() tea.Cmd {
 				}
 			}
 		}
-		return threadsMsg{threads: threads, filePath: fp, seq: seq}
+		var commentMap map[string][]review.Comment
+		if len(threads) > 0 {
+			ids := make([]string, len(threads))
+			for i, t := range threads {
+				ids[i] = t.ID
+			}
+			commentMap, _ = st.ListCommentsForThreads(ids)
+		}
+		return threadsMsg{threads: threads, comments: commentMap, filePath: fp, seq: seq}
 	}
 }
 
@@ -373,6 +385,22 @@ func (m Model) toggleDetailThreadStatus() tea.Cmd {
 	}
 }
 
+func (m Model) toggleThread(t *review.Thread) tea.Cmd {
+	if t == nil {
+		return nil
+	}
+	st := m.store
+	id := t.ID
+	newStatus := review.ThreadResolved
+	if t.Status == review.ThreadResolved {
+		newStatus = review.ThreadOpen
+	}
+	return func() tea.Msg {
+		err := st.UpdateThreadStatus(id, newStatus)
+		return threadStatusMsg{err: err}
+	}
+}
+
 // --- Helpers ---
 
 func (m Model) diffContext() int {
@@ -427,6 +455,10 @@ func (m Model) threadInfoMap() (map[int]threadInfo, map[int]bool) {
 	rangeLines := make(map[int]bool)
 	for _, t := range m.threads {
 		if t.CurrentLine > 0 {
+			var comments []review.Comment
+			if m.allComments != nil {
+				comments = m.allComments[t.ID]
+			}
 			tm[t.CurrentLine] = threadInfo{
 				body:      t.FirstComment,
 				count:     t.CommentCount,
@@ -434,6 +466,7 @@ func (m Model) threadInfoMap() (map[int]threadInfo, map[int]bool) {
 				outdated:  t.IsOutdated,
 				lineStart: t.CurrentLine,
 				lineEnd:   t.LineEnd,
+				comments:  comments,
 			}
 			if t.LineEnd > 0 && t.LineEnd != t.CurrentLine {
 				for ln := t.CurrentLine; ln <= t.LineEnd; ln++ {
@@ -630,17 +663,22 @@ func (m Model) computeSearchMatches() []int {
 	return out
 }
 
-func (m Model) cursorOnThread() bool {
+func (m Model) threadAtCursor() *review.Thread {
 	ln, ok := m.cursorToFileLine()
 	if !ok {
-		return false
+		return nil
 	}
-	for _, t := range m.threads {
+	for i := range m.threads {
+		t := &m.threads[i]
 		if t.CurrentLine == ln || (t.LineEnd > 0 && ln >= t.CurrentLine && ln <= t.LineEnd) {
-			return true
+			return t
 		}
 	}
-	return false
+	return nil
+}
+
+func (m Model) cursorOnThread() bool {
+	return m.threadAtCursor() != nil
 }
 
 func (m Model) cursorToFileLine() (lineNum int, ok bool) {
@@ -805,6 +843,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.threads = msg.threads
+		m.allComments = msg.comments
 		logpkg.Debug("loaded %d threads for %s", len(m.threads), msg.filePath)
 		if !m.showThreads {
 			m = m.withViewport()
@@ -829,6 +868,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			logpkg.Error("adding reply: %v", msg.err)
 			return m, nil
+		}
+		if m.inlineReplyThread != nil {
+			m.inlineReplyThread = nil
+			m.threadDetail = nil
+			m.threadWg++
+			return m, m.loadThreadsForFile()
 		}
 		return m, m.reopenThreadDetail()
 
@@ -1036,8 +1081,14 @@ func (m Model) updateFileFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	default:
-		if msg.Type == tea.KeyRunes {
-			m.filterQuery += string(msg.Runes)
+		r := ""
+		if msg.Type == tea.KeySpace {
+			r = " "
+		} else if msg.Type == tea.KeyRunes {
+			r = string(msg.Runes)
+		}
+		if r != "" {
+			m.filterQuery += r
 			m = m.refilter()
 			if m.visibleCount() > 0 {
 				return m, m.loadDiffForCurrent()
@@ -1155,6 +1206,14 @@ func (m Model) updateDiffPane(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.session == nil {
 			return m, nil
 		}
+		if t := m.threadAtCursor(); t != nil && !t.IsOutdated {
+			m.replyActive = true
+			m.replyInput = ""
+			m.inlineReplyThread = t
+			m.threadDetail = t
+			logpkg.Debug("inline reply opened for thread %s", t.ID)
+			return m, nil
+		}
 		ln, ok := m.cursorToFileLine()
 		if !ok {
 			return m, nil
@@ -1164,6 +1223,12 @@ func (m Model) updateDiffPane(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.commentLine = ln
 		m.commentLineEnd = 0
 		logpkg.Debug("comment input opened at line %d", ln)
+		return m, nil
+	case "r":
+		if t := m.threadAtCursor(); t != nil && !t.IsOutdated {
+			logpkg.Debug("inline resolve/reopen thread %s", t.ID)
+			return m, m.toggleThread(t)
+		}
 		return m, nil
 	case "v":
 		m.visualMode = true
@@ -1176,32 +1241,15 @@ func (m Model) updateDiffPane(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.threadDetail = nil
 		return m, nil
 	case "enter":
-		ln, ok := m.cursorToFileLine()
-		if !ok {
-			return m, nil
-		}
-		for _, t := range m.threads {
-			inRange := t.CurrentLine == ln ||
-				(t.LineEnd > 0 && ln >= t.CurrentLine && ln <= t.LineEnd)
-			if inRange {
-				m.showThreads = true
-				return m, m.openThreadDetail(t)
-			}
+		if t := m.threadAtCursor(); t != nil {
+			m.showThreads = true
+			m.inlineDetailOpen = true
+			return m, m.openThreadDetail(*t)
 		}
 		return m, nil
 	case "d":
-		ln, ok := m.cursorToFileLine()
-		if !ok {
-			return m, nil
-		}
-		for i := range m.threads {
-			t := &m.threads[i]
-			inRange := t.CurrentLine == ln ||
-				(t.LineEnd > 0 && ln >= t.CurrentLine && ln <= t.LineEnd)
-			if inRange {
-				m.confirmDelete = t
-				return m, nil
-			}
+		if t := m.threadAtCursor(); t != nil && !t.IsOutdated {
+			m.confirmDelete = t
 		}
 		return m, nil
 	}
@@ -1258,6 +1306,10 @@ func (m Model) updateCommentInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	default:
+		if msg.Type == tea.KeySpace {
+			m.commentInput += " "
+			return m, nil
+		}
 		if msg.Type == tea.KeyRunes {
 			m.commentInput += string(msg.Runes)
 			return m, nil
@@ -1298,8 +1350,14 @@ func (m Model) updateDiffSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	default:
-		if msg.Type == tea.KeyRunes {
-			m.searchQuery += string(msg.Runes)
+		r := ""
+		if msg.Type == tea.KeySpace {
+			r = " "
+		} else if msg.Type == tea.KeyRunes {
+			r = string(msg.Runes)
+		}
+		if r != "" {
+			m.searchQuery += r
 			m.searchMatches = m.computeSearchMatches()
 			if len(m.searchMatches) > 0 {
 				m.searchIdx = 0
@@ -1441,6 +1499,10 @@ func (m Model) updateThreadDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.threadDetail = nil
 		m.threadComments = nil
+		if m.inlineDetailOpen {
+			m.showThreads = false
+			m.inlineDetailOpen = false
+		}
 		return m, nil
 	case "j", "down":
 		var vp viewport.Model
@@ -1474,6 +1536,10 @@ func (m Model) updateReplyInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.replyActive = false
 		m.replyInput = ""
+		if m.inlineReplyThread != nil {
+			m.inlineReplyThread = nil
+			m.threadDetail = nil
+		}
 		return m, nil
 	case "backspace":
 		if len(m.replyInput) > 0 {
@@ -1482,6 +1548,10 @@ func (m Model) updateReplyInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	default:
+		if msg.Type == tea.KeySpace {
+			m.replyInput += " "
+			return m, nil
+		}
 		if msg.Type == tea.KeyRunes {
 			m.replyInput += string(msg.Runes)
 			return m, nil
@@ -1856,10 +1926,13 @@ func (m Model) renderFooter() string {
 				hints = append(hints, "e expand")
 			}
 		}
-		hints = append(hints, "/ search", "c comment", "v visual", "t threads")
-		if m.cursorOnThread() {
-			hints = append(hints, "enter open thread", "d delete")
+		hints = append(hints, "/ search")
+		if t := m.threadAtCursor(); t != nil && !t.IsOutdated {
+			hints = append(hints, "c reply", "r resolve/reopen", "enter detail", "d delete")
+		} else {
+			hints = append(hints, "c comment")
 		}
+		hints = append(hints, "v visual", "t threads")
 		if len(m.searchMatches) > 0 {
 			hints = append(hints, "n/N next/prev")
 		}

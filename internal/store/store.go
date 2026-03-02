@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -251,6 +252,38 @@ func (s *Store) ListComments(threadID string) ([]review.Comment, error) {
 		comments = append(comments, c)
 	}
 	return comments, rows.Err()
+}
+
+func (s *Store) ListCommentsForThreads(threadIDs []string) (map[string][]review.Comment, error) {
+	if len(threadIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(threadIDs))
+	args := make([]any, len(threadIDs))
+	for i, id := range threadIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := "SELECT id, thread_id, author, body, created_at FROM comments WHERE thread_id IN (" +
+		strings.Join(placeholders, ",") + ") ORDER BY created_at"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string][]review.Comment)
+	for rows.Next() {
+		var c review.Comment
+		var ca string
+		if err := rows.Scan(&c.ID, &c.ThreadID, &c.Author, &c.Body, &ca); err != nil {
+			return nil, err
+		}
+		c.CreatedAt, _ = time.Parse(time.RFC3339Nano, ca)
+		result[c.ThreadID] = append(result[c.ThreadID], c)
+	}
+	return result, rows.Err()
 }
 
 // --- Helpers ---
