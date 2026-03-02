@@ -2,7 +2,9 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/viewport"
@@ -95,6 +97,13 @@ type Model struct {
 	replyActive bool
 	replyInput  string
 
+	// Delete confirmation
+	confirmDelete *review.Thread
+
+	// Goto line
+	gotoActive bool
+	gotoInput  string
+
 	width  int
 	height int
 	ready  bool
@@ -136,6 +145,19 @@ type commentCreatedMsg struct{ err error }
 type threadStatusMsg struct{ err error }
 type threadDeletedMsg struct{ err error }
 type replyCreatedMsg struct{ err error }
+type tickMsg struct{}
+type softChangesMsg struct {
+	changes []git.FileChange
+	err     error
+}
+
+const autoRefreshInterval = 3 * time.Second
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(autoRefreshInterval, func(time.Time) tea.Msg {
+		return tickMsg{}
+	})
+}
 
 // --- Constructor & Init ---
 
@@ -144,7 +166,7 @@ func New(repo *git.Repo, st *store.Store) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.loadChanges, m.loadOrCreateSession)
+	return tea.Batch(m.loadChanges, m.loadOrCreateSession, tickCmd())
 }
 
 // --- Commands ---
@@ -152,6 +174,11 @@ func (m Model) Init() tea.Cmd {
 func (m Model) loadChanges() tea.Msg {
 	changes, err := m.repo.Changes()
 	return changesMsg{changes: changes, err: err}
+}
+
+func (m Model) softLoadChanges() tea.Msg {
+	changes, err := m.repo.Changes()
+	return softChangesMsg{changes: changes, err: err}
 }
 
 func (m Model) loadOrCreateSession() tea.Msg {
@@ -189,6 +216,17 @@ func (m Model) visibleCount() int {
 		return len(m.filtered)
 	}
 	return len(m.changes)
+}
+
+func (m Model) visibleChanges() []git.FileChange {
+	if m.filtered != nil {
+		out := make([]git.FileChange, len(m.filtered))
+		for i, f := range m.filtered {
+			out[i] = m.changes[f.Index]
+		}
+		return out
+	}
+	return m.changes
 }
 
 func (m Model) loadDiffForCurrent() tea.Cmd {
@@ -319,18 +357,6 @@ func (m Model) toggleThreadStatus() tea.Cmd {
 	}
 }
 
-func (m Model) deleteSelectedThread() tea.Cmd {
-	if m.threadCursor >= len(m.threads) {
-		return nil
-	}
-	st := m.store
-	id := m.threads[m.threadCursor].ID
-	return func() tea.Msg {
-		err := st.DeleteThread(id)
-		return threadDeletedMsg{err: err}
-	}
-}
-
 func (m Model) toggleDetailThreadStatus() tea.Cmd {
 	if m.threadDetail == nil {
 		return nil
@@ -456,6 +482,20 @@ func (m Model) moveCursor(delta int) Model {
 	if m.diffCursor >= total {
 		m.diffCursor = total - 1
 	}
+
+	if !m.showFullFile && m.parsed != nil && delta != 0 {
+		dir := 1
+		if delta < 0 {
+			dir = -1
+		}
+		for m.diffCursor > 0 && m.diffCursor < total-1 {
+			dl := m.parsed.lines[m.diffCursor]
+			if dl.kind != lineDeleted {
+				break
+			}
+			m.diffCursor += dir
+		}
+	}
 	content, offsets := m.renderViewport()
 	m.lineOffsets = offsets
 	m.viewport.SetContent(content)
@@ -481,6 +521,53 @@ func (m Model) moveCursor(delta int) Model {
 		m.viewport.YOffset = maxY
 	}
 	return m
+}
+
+func (m Model) isBlockBoundary(idx int) bool {
+	if m.showFullFile && m.fileContent != "" {
+		lines := strings.Split(m.fileContent, "\n")
+		if idx < 0 || idx >= len(lines) {
+			return true
+		}
+		return strings.TrimSpace(lines[idx]) == ""
+	}
+	if m.parsed != nil {
+		if idx < 0 || idx >= len(m.parsed.lines) {
+			return true
+		}
+		dl := m.parsed.lines[idx]
+		switch dl.kind {
+		case lineHunkHeader, lineCollapsed:
+			return true
+		default:
+			return strings.TrimSpace(dl.content) == ""
+		}
+	}
+	return false
+}
+
+func (m Model) jumpBlock(dir int) Model {
+	total := m.totalDiffLines()
+	if total == 0 {
+		return m
+	}
+	cur := m.diffCursor
+
+	// Skip current block boundary lines
+	for cur+dir >= 0 && cur+dir < total && m.isBlockBoundary(cur) {
+		cur += dir
+	}
+	// Move through non-boundary lines
+	for cur+dir >= 0 && cur+dir < total && !m.isBlockBoundary(cur+dir) {
+		cur += dir
+	}
+	// Land on the boundary
+	if cur+dir >= 0 && cur+dir < total {
+		cur += dir
+	}
+
+	m.diffCursor = cur
+	return m.moveCursor(0)
 }
 
 func (m Model) totalTermLines() int {
@@ -775,6 +862,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.SetContent(m.renderThreadDetailContent(m.rightPaneWidth()))
 		return m, nil
 
+	case tickMsg:
+		var cmds []tea.Cmd
+		cmds = append(cmds, tickCmd())
+		if !m.commentActive && !m.replyActive && !m.filterActive && !m.searchActive && !m.gotoActive {
+			cmds = append(cmds, m.softLoadChanges)
+			if m.currentFile != "" && m.session != nil {
+				m.threadWg++
+				cmds = append(cmds, m.loadThreadsForFile())
+			}
+		}
+		return m, tea.Batch(cmds...)
+
+	case softChangesMsg:
+		if msg.err != nil {
+			return m, nil
+		}
+		oldFile := m.currentFile
+		m.changes = msg.changes
+		m = m.refilter()
+		if oldFile != "" {
+			for i, fc := range m.visibleChanges() {
+				if fc.Path == oldFile {
+					m.cursor = i
+					break
+				}
+			}
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":
@@ -791,6 +907,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if m.confirmDelete != nil {
+			return m.updateConfirmDelete(msg)
+		}
+
 		switch m.focus {
 		case paneFiles:
 			return m.updateFilePane(msg)
@@ -798,6 +918,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateDiffPane(msg)
 		}
 	}
+	return m, nil
+}
+
+func (m Model) updateConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "y" {
+		id := m.confirmDelete.ID
+		m.confirmDelete = nil
+		st := m.store
+		return m, func() tea.Msg {
+			err := st.DeleteThread(id)
+			return threadDeletedMsg{err: err}
+		}
+	}
+	m.confirmDelete = nil
 	return m, nil
 }
 
@@ -932,6 +1066,9 @@ func (m Model) updateDiffPane(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.visualMode {
 		return m.updateVisualMode(msg)
 	}
+	if m.gotoActive {
+		return m.updateGotoLine(msg)
+	}
 	if m.searchActive {
 		return m.updateDiffSearch(msg)
 	}
@@ -951,6 +1088,16 @@ func (m Model) updateDiffPane(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "ctrl+u":
 		m = m.moveCursor(-m.viewport.Height / 2)
+		return m, nil
+	case ":":
+		m.gotoActive = true
+		m.gotoInput = ""
+		return m, nil
+	case "{":
+		m = m.jumpBlock(-1)
+		return m, nil
+	case "}":
+		m = m.jumpBlock(1)
 		return m, nil
 	case "g":
 		m.diffCursor = 0
@@ -1042,6 +1189,21 @@ func (m Model) updateDiffPane(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case "d":
+		ln, ok := m.cursorToFileLine()
+		if !ok {
+			return m, nil
+		}
+		for i := range m.threads {
+			t := &m.threads[i]
+			inRange := t.CurrentLine == ln ||
+				(t.LineEnd > 0 && ln >= t.CurrentLine && ln <= t.LineEnd)
+			if inRange {
+				m.confirmDelete = t
+				return m, nil
+			}
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -1071,6 +1233,7 @@ func (m Model) updateVisualMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "esc":
 		m.visualMode = false
+		m = m.withViewport()
 		return m, nil
 	}
 	return m, nil
@@ -1151,6 +1314,80 @@ func (m Model) updateDiffSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) updateGotoLine(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		m.gotoActive = false
+		n, err := strconv.Atoi(m.gotoInput)
+		if err != nil || n < 1 {
+			m.gotoInput = ""
+			return m, nil
+		}
+		target := m.fileLineToIndex(n)
+		m.diffCursor = target
+		m = m.moveCursor(0)
+		m.gotoInput = ""
+		return m, nil
+	case "esc":
+		m.gotoActive = false
+		m.gotoInput = ""
+		return m, nil
+	case "backspace":
+		if len(m.gotoInput) > 0 {
+			m.gotoInput = m.gotoInput[:len(m.gotoInput)-1]
+		}
+		return m, nil
+	default:
+		if msg.Type == tea.KeyRunes {
+			for _, r := range msg.Runes {
+				if r >= '0' && r <= '9' {
+					m.gotoInput += string(r)
+				}
+			}
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
+func (m Model) fileLineToIndex(lineNum int) int {
+	if m.showFullFile {
+		idx := lineNum - 1
+		total := m.totalDiffLines()
+		if idx < 0 {
+			return 0
+		}
+		if idx >= total {
+			return total - 1
+		}
+		return idx
+	}
+	if m.parsed == nil {
+		return 0
+	}
+	for i, dl := range m.parsed.lines {
+		if dl.newNum == lineNum {
+			return i
+		}
+	}
+	// Closest match: find the nearest line
+	best := 0
+	bestDist := -1
+	for i, dl := range m.parsed.lines {
+		if dl.newNum > 0 {
+			dist := dl.newNum - lineNum
+			if dist < 0 {
+				dist = -dist
+			}
+			if bestDist < 0 || dist < bestDist {
+				bestDist = dist
+				best = i
+			}
+		}
+	}
+	return best
+}
+
 // --- Thread Panel ---
 
 func (m Model) updateThreadList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1177,7 +1414,10 @@ func (m Model) updateThreadList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		return m, m.toggleThreadStatus()
 	case "d":
-		return m, m.deleteSelectedThread()
+		if m.threadCursor < len(m.threads) {
+			m.confirmDelete = &m.threads[m.threadCursor]
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -1255,6 +1495,9 @@ func (m Model) updateReplyInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	if !m.ready {
 		return "  Loading..."
+	}
+	if m.confirmDelete != nil {
+		return m.renderDeleteConfirmDialog()
 	}
 	if m.commentActive {
 		return m.renderCommentDialog()
@@ -1336,6 +1579,51 @@ func (m Model) renderDialog(title, context, input string) string {
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(accentColor).
+		Padding(1, 2).
+		Width(boxW).
+		Render(strings.Join(parts, "\n"))
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
+func (m Model) renderDeleteConfirmDialog() string {
+	t := m.confirmDelete
+	boxW := m.width * 2 / 3
+	if boxW < 40 {
+		boxW = 40
+	}
+	if boxW > 60 {
+		boxW = 60
+	}
+
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#EF4444")).Render("Delete Thread")
+
+	label := fmt.Sprintf("%s:%d", t.FilePath, t.CurrentLine)
+	if t.LineEnd > 0 && t.LineEnd != t.CurrentLine {
+		label = fmt.Sprintf("%s:%d-%d", t.FilePath, t.CurrentLine, t.LineEnd)
+	}
+
+	comment := t.FirstComment
+	innerW := boxW - 6
+	if len(comment) > innerW-4 {
+		comment = comment[:innerW-7] + "..."
+	}
+
+	var parts []string
+	parts = append(parts, title)
+	parts = append(parts, "")
+	parts = append(parts, lipgloss.NewStyle().Foreground(mutedColor).Render(label))
+	if comment != "" {
+		parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.Color("#FAFAFA")).Render("  │ "+comment))
+	}
+	parts = append(parts, "")
+	parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.Color("#FAFAFA")).Render("Are you sure?"))
+	parts = append(parts, "")
+	parts = append(parts, lipgloss.NewStyle().Foreground(mutedColor).Render("y to confirm • any other key to cancel"))
+
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#EF4444")).
 		Padding(1, 2).
 		Width(boxW).
 		Render(strings.Join(parts, "\n"))
@@ -1503,6 +1791,9 @@ func (m Model) diffSubtitle(rw int) string {
 		hi := max(m.visualStart, m.diffCursor)
 		return fmt.Sprintf(" Visual: %d-%d │ c comment │ esc cancel", lo+1, hi+1)
 	}
+	if m.gotoActive {
+		return fmt.Sprintf(" :%s▏", m.gotoInput)
+	}
 	if m.searchActive {
 		sub := fmt.Sprintf(" /%s▏", m.searchQuery)
 		if m.searchQuery != "" && len(m.searchMatches) == 0 {
@@ -1554,7 +1845,7 @@ func (m Model) renderFooter() string {
 	} else if m.searchActive {
 		hints = append(hints, "type to search", "enter confirm", "esc cancel")
 	} else {
-		hints = append(hints, "↑↓/jk move", "ctrl+d/u page", "g/G top/bottom")
+		hints = append(hints, "↑↓/jk move", "{/} block", "ctrl+d/u page", "g/G top/bottom")
 		if m.showFullFile {
 			hints = append(hints, "f diff view")
 		} else {
@@ -1567,7 +1858,7 @@ func (m Model) renderFooter() string {
 		}
 		hints = append(hints, "/ search", "c comment", "v visual", "t threads")
 		if m.cursorOnThread() {
-			hints = append(hints, "enter open thread")
+			hints = append(hints, "enter open thread", "d delete")
 		}
 		if len(m.searchMatches) > 0 {
 			hints = append(hints, "n/N next/prev")

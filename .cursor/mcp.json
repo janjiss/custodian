@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "custodian": {
+      "command": "/home/janjiss/.local/bin/custodian-mcp"
+    }
+  }
+}

@@ -160,7 +160,7 @@ func renderParsedDiff(pd *parsedDiff, fileName string, width int, cursorLine int
 		isMatch := matches[i]
 		ti, hasThread := threads[dl.newNum]
 		inRange := rangeLines[dl.newNum]
-		inVisual := visStart >= 0 && i >= visStart && i <= visEnd
+		inVisual := visStart >= 0 && i >= visStart && i <= visEnd && dl.kind != lineDeleted
 		switch dl.kind {
 		case lineHunkHeader:
 			mark := lineMarker(false, false, inVisual, cur, lineHunkHeader)
