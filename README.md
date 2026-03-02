@@ -2,6 +2,8 @@
 
 A local, git-based code review tool where a human reviewer collaborates with an AI model. Review uncommitted changes in a terminal UI, leave comments anchored to code, and let an AI respond, apply fixes, and resolve threads — all without leaving your repository.
 
+<img width="3792" height="2060" alt="image" src="https://github.com/user-attachments/assets/f01847d2-382f-4935-ab50-b1de847785bf" />
+
 ## Why
 
 Code review tools live on remote platforms. Custodian brings the review loop local: you review your own uncommitted work (or an AI's work) before it ever reaches a PR. The AI participates as a collaborator through MCP, reading your feedback and acting on it directly in the working tree.
