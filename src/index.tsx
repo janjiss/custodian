@@ -46,7 +46,7 @@ if (cwdIdx >= 0 && args[cwdIdx + 1]) {
   process.chdir(args[cwdIdx + 1])
 }
 
-getConfig()
+const config = getConfig()
 getDb()
 
 const cleanup = () => {
@@ -60,4 +60,11 @@ render(() => (
   <ThemeProvider>
     <App />
   </ThemeProvider>
-))
+), {
+  exitOnCtrlC: true,
+  useMouse: config.terminal.useMouse,
+  useKittyKeyboard: {
+    disambiguate: true,
+    alternateKeys: true,
+  },
+})

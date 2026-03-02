@@ -8,7 +8,8 @@ export function useDiffNavigation(files: () => FileDiff[]) {
 
   const selectedFile = createMemo(() => {
     const f = files()
-    const idx = selectedFileIndex()
+    if (f.length === 0) return null
+    const idx = Math.max(0, Math.min(selectedFileIndex(), f.length - 1))
     return f[idx] ?? null
   })
 

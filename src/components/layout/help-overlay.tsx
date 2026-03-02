@@ -12,6 +12,7 @@ export const HelpOverlay = (props: HelpOverlayProps) => {
       title: "Global",
       bindings: [
         ["Ctrl+?", "Toggle help"],
+        ["Ctrl+Shift+C", "Copy selected text"],
         ["Esc", "Cancel streaming / active prompt"],
         ["Ctrl+C", "Quit"],
       ],
@@ -32,9 +33,11 @@ export const HelpOverlay = (props: HelpOverlayProps) => {
       title: "Panes",
       bindings: [
         [`${leader} .`, "Cycle pane focus (Files -> Chat -> Diff)"],
+        [`${leader} ,`, "Cycle pane focus backward"],
+        [`${leader} h / ${leader} l`, "Cycle pane backward / forward"],
         [`${leader} Enter`, "Expand / collapse focused pane"],
         [`${leader} [ / ${leader} ]`, "Resize focused pane -/+"],
-        ["Ctrl+Tab", "Cycle pane focus (fallback)"],
+        ["Ctrl+Tab / Ctrl+. / Ctrl+,", "Cycle pane focus fallback"],
         ["Ctrl+[ / Ctrl+]", "Resize focused pane (fallback)"],
       ],
     },

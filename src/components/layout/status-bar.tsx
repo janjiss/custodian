@@ -6,6 +6,7 @@ interface StatusBarProps {
   connected?: boolean
   streaming?: boolean
   leaderLabel?: string
+  contextWindowLabel?: string
 }
 
 export const StatusBar = (props: StatusBarProps) => {
@@ -27,6 +28,11 @@ export const StatusBar = (props: StatusBarProps) => {
             {" "}Generating{" "}
           </text>
         </Show>
+        <Show when={props.contextWindowLabel}>
+          <text fg={theme.color("selectedListItemText")} bg={theme.color("backgroundMenu")}>
+            {" "}{props.contextWindowLabel}{" "}
+          </text>
+        </Show>
         <box flexGrow={1} />
         <Show when={props.connected}>
           <text fg={theme.color("success")}> ● </text>
@@ -38,7 +44,7 @@ export const StatusBar = (props: StatusBarProps) => {
 
       <box flexDirection="row" width="100%" height={1}>
         <text fg={theme.color("textMuted")}>
-          {` esc stop  leader: ${leader}  ${leader}+s sessions  ${leader}+. pane  ${leader}+[ / ${leader}+] resize  ctrl+? help`}
+          {` esc stop  leader: ${leader}  ${leader}+s sessions  ${leader}+. / ${leader}+, pane  ${leader}+[ / ${leader}+] resize  ctrl+? help`}
         </text>
       </box>
     </box>

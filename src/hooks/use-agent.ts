@@ -1,4 +1,4 @@
-import { createSignal, createResource, createEffect, onMount, onCleanup } from "solid-js"
+import { createSignal, createResource, createEffect, createMemo, onMount, onCleanup } from "solid-js"
 import {
   getAgentClient,
   type AgentSession,
@@ -23,6 +23,8 @@ import {
 
 const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "sessions", description: "Open session picker" },
+  { name: "expand", description: "Expand code panes (files+diff)" },
+  { name: "collapse", description: "Return to normal three-pane layout" },
 ]
 
 export function useAgent() {
@@ -66,6 +68,15 @@ export function useAgent() {
     } catch {
       return BUILTIN_COMMANDS
     }
+  })
+
+  const selectedModelInfo = createMemo<ModelInfo | null>(() => {
+    const selected = selectedModel()
+    const allProviders = providers()
+    if (!selected || !allProviders) return null
+    const provider = allProviders.find((p) => p.id === selected.providerID)
+    if (!provider) return null
+    return provider.models[selected.modelID] ?? null
   })
 
   createEffect(() => {
@@ -497,6 +508,7 @@ export function useAgent() {
     pendingPermissions,
     pendingQuestions,
     selectedModel,
+    selectedModelInfo,
     providers,
     commands,
     createSession,

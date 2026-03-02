@@ -1,6 +1,9 @@
 import { For, Show, Switch, Match, createMemo } from "solid-js"
+import { createTextAttributes } from "@opentui/core"
 import type { AgentMessage, MessagePart } from "../../core/agent"
 import { useTheme } from "../../theme/engine"
+
+const ITALIC = createTextAttributes({ italic: true })
 
 interface ChatProps {
   messages: AgentMessage[]
@@ -46,15 +49,21 @@ const UserMessage = (props: { message: AgentMessage }) => {
 const ReasoningPart = (props: { part: MessagePart }) => {
   const theme = useTheme()
   const content = createMemo(() => (props.part.text ?? "").replace("[REDACTED]", "").trim())
+  const lines = createMemo(() => content().split(/\r?\n/).map((l) => l.trimEnd()).filter((l) => l.length > 0))
   if (!content()) return null
   return (
-    <box flexDirection="row" width="100%" marginTop={1}>
-      <box width={1}>
-        <text fg={theme.color("border")}>▏</text>
+    <box flexDirection="column" width="100%">
+      <box flexDirection="row" width="100%" paddingLeft={1} paddingRight={1}>
+        <text fg={theme.color("secondary")} attributes={ITALIC}>~ Thinking</text>
       </box>
-      <box flexDirection="column" flexGrow={1} paddingLeft={1}>
-        <text fg={theme.color("secondary")} italic>Thinking</text>
-        <text fg={theme.color("textMuted")} wrap="word" italic selectable>{content()}</text>
+      <box flexDirection="column" paddingLeft={1} paddingRight={1}>
+        <For each={lines()}>
+          {(line) => (
+            <text fg={theme.color("textMuted")} wrap="word" selectable attributes={ITALIC}>
+              {line}
+            </text>
+          )}
+        </For>
       </box>
     </box>
   )
@@ -63,7 +72,7 @@ const ReasoningPart = (props: { part: MessagePart }) => {
 const TextPart = (props: { part: MessagePart }) => {
   const theme = useTheme()
   return (
-    <box marginTop={1}>
+    <box>
       <text fg={theme.color("text")} wrap="word" selectable>{props.part.text ?? ""}</text>
     </box>
   )
@@ -85,9 +94,9 @@ const ToolPart = (props: { part: MessagePart; showDetails: boolean }) => {
   if (!props.showDetails && status() === "completed") return null
 
   return (
-    <box flexDirection="column" marginTop={1}>
-      <text fg={status() === "error" ? theme.color("error") : theme.color("textMuted")}>
-        {symbol()} {toolTitle(props.part.tool ?? "tool")}{" "}
+    <box flexDirection="column">
+      <text fg={status() === "error" ? theme.color("error") : theme.color("textMuted")} attributes={ITALIC}>
+        ~ {symbol()} {toolTitle(props.part.tool ?? "tool")}{" "}
         <Show when={status() === "running"}>
           <span>...</span>
         </Show>
@@ -97,7 +106,7 @@ const ToolPart = (props: { part: MessagePart; showDetails: boolean }) => {
       </text>
 
       <Show when={props.showDetails && state()?.output}>
-        <text fg={theme.color("textMuted")} wrap="word" selectable>
+        <text fg={theme.color("textMuted")} wrap="word" selectable attributes={ITALIC}>
           {String(state()!.output).slice(0, 260)}
         </text>
       </Show>
@@ -113,7 +122,7 @@ const StepFinishPart = (props: { part: MessagePart }) => {
     return `${t.input} in · ${t.output} out`
   })
   return (
-    <box marginTop={1}>
+    <box>
       <text fg={theme.color("textMuted")}>
         {tokenLabel()}
         <Show when={props.part.cost && props.part.cost > 0}>
@@ -124,39 +133,47 @@ const StepFinishPart = (props: { part: MessagePart }) => {
   )
 }
 
-const PartRenderer = (props: { part: MessagePart; showThinking: boolean; showToolDetails: boolean }) => (
-  <Switch fallback={null}>
-    <Match when={props.part.type === "text" && props.part.text}>
-      <TextPart part={props.part} />
-    </Match>
-    <Match when={props.part.type === "reasoning" && props.showThinking}>
-      <ReasoningPart part={props.part} />
-    </Match>
-    <Match when={props.part.type === "tool"}>
-      <ToolPart part={props.part} showDetails={props.showToolDetails} />
-    </Match>
-    <Match when={props.part.type === "step-finish"}>
-      <StepFinishPart part={props.part} />
-    </Match>
-  </Switch>
-)
+const PartRenderer = (props: { part: MessagePart; showThinking: boolean; showToolDetails: boolean }) => {
+  return (
+    <Switch fallback={null}>
+      <Match when={props.part.type === "text" && props.part.text}>
+        <TextPart part={props.part} />
+      </Match>
+      <Match when={props.part.type === "reasoning"}>
+        <ReasoningPart part={props.part} />
+      </Match>
+      <Match when={props.part.type === "tool"}>
+        <ToolPart part={props.part} showDetails={props.showToolDetails} />
+      </Match>
+      <Match when={props.part.type === "step-finish"}>
+        <StepFinishPart part={props.part} />
+      </Match>
+    </Switch>
+  )
+}
 
 const AssistantMessage = (props: { message: AgentMessage; showThinking: boolean; showToolDetails: boolean }) => {
+  const theme = useTheme()
   return (
     <box
-      flexDirection="column"
+      flexDirection="row"
       width="100%"
       marginTop={1}
     >
-      <For each={props.message.parts}>
-        {(part) => (
-          <PartRenderer
-            part={part}
-            showThinking={props.showThinking}
-            showToolDetails={props.showToolDetails}
-          />
-        )}
-      </For>
+      <text fg={theme.color("border")} width={2}>▏ </text>
+      <box flexDirection="column" flexGrow={1}>
+        <For each={props.message.parts}>
+          {(part, i) => (
+            <box marginTop={i() > 0 ? 1 : 0}>
+              <PartRenderer
+                part={part}
+                showThinking={props.showThinking}
+                showToolDetails={props.showToolDetails}
+              />
+            </box>
+          )}
+        </For>
+      </box>
     </box>
   )
 }

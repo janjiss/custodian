@@ -23,6 +23,9 @@ export interface CustodianConfig {
     leader: string
     leaderTimeoutMs: number
   }
+  terminal: {
+    useMouse: boolean
+  }
 }
 
 const DEFAULT_CONFIG: CustodianConfig = {
@@ -39,6 +42,9 @@ const DEFAULT_CONFIG: CustodianConfig = {
   keybindings: {
     leader: "ctrl+g",
     leaderTimeoutMs: 1000,
+  },
+  terminal: {
+    useMouse: true,
   },
 }
 
@@ -88,6 +94,10 @@ function merge(base: CustodianConfig, overrides: Partial<CustodianConfig>): Cust
     keybindings: {
       ...base.keybindings,
       ...(overrides.keybindings ?? {}),
+    },
+    terminal: {
+      ...base.terminal,
+      ...(overrides.terminal ?? {}),
     },
   }
 }

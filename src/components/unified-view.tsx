@@ -5,7 +5,7 @@ import { useGitDiff, type DiffSource } from "../hooks/use-git"
 import { useDiffNavigation } from "../hooks/use-diff"
 import { GitService } from "../core/git"
 import { updateDiffContext, clearDiffContext } from "../core/diff-context"
-import { ThreePane, type Pane } from "./layout/three-pane"
+import { ThreePane, type Pane, type LayoutMode } from "./layout/three-pane"
 import { StatusBar } from "./layout/status-bar"
 import { DiffViewer } from "./review/diff-viewer"
 import { Chat } from "./agent/chat"
@@ -17,7 +17,7 @@ import { SessionDialog } from "./agent/session-dialog"
 import { LoginDialog } from "./agent/login-dialog"
 import { statusChar, formatStats } from "../core/diff"
 import { useTheme } from "../theme/engine"
-import { getLeaderConfig, keyMatches } from "../core/keybindings"
+import { getLeaderConfig, getKeyName, keyMatches } from "../core/keybindings"
 
 export const UnifiedView = () => {
   const theme = useTheme()
@@ -28,7 +28,7 @@ export const UnifiedView = () => {
   const nav = useDiffNavigation(allDiffs)
 
   const [focusedPane, setFocusedPane] = createSignal<Pane>("chat")
-  const [expandedPane, setExpandedPane] = createSignal<Pane | null>(null)
+  const [layoutMode, setLayoutMode] = createSignal<LayoutMode>("all")
   const [paneWidths, setPaneWidths] = createSignal({ files: 18, chat: 57, diff: 25 })
   const [contextFiles, setContextFiles] = createSignal<Set<string>>(new Set())
   const [showModelSelector, setShowModelSelector] = createSignal(false)
@@ -37,18 +37,40 @@ export const UnifiedView = () => {
   const [showThinking, setShowThinking] = createSignal(true)
   const [showToolDetails, setShowToolDetails] = createSignal(true)
   const [leaderArmed, setLeaderArmed] = createSignal(false)
+  const [suppressInputUntil, setSuppressInputUntil] = createSignal(0)
   const leader = getLeaderConfig()
   let leaderTimer: ReturnType<typeof setTimeout> | null = null
 
-  const diffVisible = createMemo(() => nav.selectedFile() !== null)
+  const diffVisible = createMemo(() => true)
   const topPermission = createMemo(() => agent.pendingPermissions()[0] ?? null)
   const topQuestion = createMemo(() => agent.pendingQuestions()[0] ?? null)
-
   const modelLabel = createMemo(() => {
     const m = agent.selectedModel()
     if (!m) return undefined
     return `${m.providerID}/${m.modelID}`
   })
+
+  const contextWindowLabel = createMemo(() => {
+    const model = agent.selectedModelInfo?.()
+    const max = model?.contextWindow
+    if (!max || !Number.isFinite(max)) return undefined
+
+    const msgs = agent.messages()
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const parts = msgs[i].parts
+      for (let j = parts.length - 1; j >= 0; j--) {
+        const p = parts[j]
+        if (p.type === "step-finish" && p.tokens?.input && p.tokens.input > 0) {
+          const used = p.tokens.input
+          const left = Math.max(max - used, 0)
+          return `ctx ${left}/${max}`
+        }
+      }
+    }
+
+    return `ctx ?/${max}`
+  })
+  const contextCount = createMemo(() => contextFiles().size)
 
   onMount(() => {
     fetchDiff()
@@ -91,14 +113,30 @@ export const UnifiedView = () => {
   }
 
   const clearContext = () => {
-    setContextFiles(new Set())
+    setContextFiles(new Set<string>())
   }
 
   const handleSlashCommand = (command: string) => {
     const normalized = command.trim().toLowerCase()
     if (normalized === "sessions") {
       agent.refreshSessions()
+      setLayoutMode("all")
       setShowSessions(true)
+      return
+    }
+    if (normalized === "expand") {
+      setLayoutMode("code")
+      setPaneWidths({ files: 45, chat: 0, diff: 55 })
+      if (focusedPane() === "chat") setFocusedPane("files")
+      return
+    }
+    if (normalized === "collapse") {
+      setLayoutMode("all")
+      setPaneWidths((prev) => ({
+        files: prev.files > 0 ? prev.files : 18,
+        chat: 57,
+        diff: prev.diff > 0 ? prev.diff : 25,
+      }))
       return
     }
     agent.runCommand(command)
@@ -106,6 +144,7 @@ export const UnifiedView = () => {
 
   const armLeader = () => {
     setLeaderArmed(true)
+    setSuppressInputUntil(Date.now() + leader.timeoutMs)
     if (leaderTimer) clearTimeout(leaderTimer)
     leaderTimer = setTimeout(() => setLeaderArmed(false), leader.timeoutMs)
   }
@@ -118,17 +157,98 @@ export const UnifiedView = () => {
     }
   }
 
-  const cycleFocus = () => {
+  const runLeaderAction = (name: string): boolean => {
+    const keyIs = (...aliases: string[]) => aliases.includes(name)
+    if (keyIs("s")) {
+      agent.refreshSessions()
+      setLayoutMode("all")
+      setShowSessions(true)
+      return true
+    }
+    if (keyIs("m")) {
+      setShowModelSelector(true)
+      return true
+    }
+    if (keyIs("l")) {
+      setShowLogin(true)
+      return true
+    }
+    if (keyIs("r")) {
+      fetchDiff()
+      return true
+    }
+    if (keyIs("k")) {
+      agent.compact()
+      return true
+    }
+    if (keyIs("t")) {
+      setShowThinking((v) => !v)
+      return true
+    }
+    if (keyIs("y")) {
+      setShowToolDetails((v) => !v)
+      return true
+    }
+    if (keyIs("n")) {
+      agent.createSession()
+      setLayoutMode("all")
+      return true
+    }
+    if (keyIs(".", "dot", "period")) {
+      cycleFocus()
+      return true
+    }
+    if (keyIs(",", "comma")) {
+      cycleFocus(-1)
+      return true
+    }
+    if (keyIs("h", "left")) {
+      cycleFocus(-1)
+      return true
+    }
+    if (keyIs("l", "right")) {
+      cycleFocus(1)
+      return true
+    }
+    if (keyIs("enter", "e")) {
+      toggleExpand()
+      return true
+    }
+    if (keyIs("[", "openbracket", "leftbracket", "lbracket")) {
+      resizeFocusedPane(-5)
+      return true
+    }
+    if (keyIs("]", "closebracket", "rightbracket", "rbracket")) {
+      resizeFocusedPane(5)
+      return true
+    }
+    return false
+  }
+
+  const cycleFocus = (delta = 1) => {
     if (topPermission()) return
 
     const panes: Pane[] = diffVisible() ? ["files", "chat", "diff"] : ["files", "chat"]
     const idx = panes.indexOf(focusedPane())
-    setFocusedPane(panes[(idx + 1) % panes.length])
+    const next = (idx + delta + panes.length) % panes.length
+    setFocusedPane(panes[next])
   }
 
   const toggleExpand = () => {
-    const current = focusedPane()
-    setExpandedPane((prev) => (prev === current ? null : current))
+    setLayoutMode((prev) => {
+      if (prev === "all") {
+        setPaneWidths({ files: 45, chat: 0, diff: 55 })
+        if (focusedPane() === "chat") setFocusedPane("files")
+        return "code"
+      }
+      if (prev === "code") {
+        setPaneWidths({ files: 0, chat: 100, diff: 0 })
+        setFocusedPane("chat")
+        return "chat"
+      }
+      setPaneWidths({ files: 18, chat: 57, diff: 25 })
+      return "all"
+    })
   }
 
   const resizeFocusedPane = (delta: number) => {
@@ -182,7 +302,8 @@ export const UnifiedView = () => {
   }
 
   useKeyboard((key) => {
-    const name = String(key.name ?? "").toLowerCase()
+    const name = getKeyName(key as any)
+    const keyIs = (...aliases: string[]) => aliases.includes(name)
 
     if (showModelSelector() || showSessions() || showLogin()) return
 
@@ -193,48 +314,10 @@ export const UnifiedView = () => {
 
     if (leaderArmed()) {
       disarmLeader()
-      switch (name) {
-        case "s":
-          agent.refreshSessions()
-          setShowSessions(true)
-          return
-        case "m":
-          setShowModelSelector(true)
-          return
-        case "l":
-          setShowLogin(true)
-          return
-        case "r":
-          fetchDiff()
-          return
-        case "k":
-          agent.compact()
-          return
-        case "t":
-          setShowThinking((v) => !v)
-          return
-        case "y":
-          setShowToolDetails((v) => !v)
-          return
-        case "n":
-          agent.createSession()
-          return
-        case ".":
-          cycleFocus()
-          return
-        case "return":
-          toggleExpand()
-          return
-        case "[":
-          resizeFocusedPane(-5)
-          return
-        case "]":
-          resizeFocusedPane(5)
-          return
-      }
+      if (runLeaderAction(name)) return
     }
 
-    if (name === "escape") {
+    if (keyIs("escape", "esc")) {
       disarmLeader()
       if (agent.isStreaming() || topPermission() !== null || topQuestion() !== null) {
         agent.cancel()
@@ -243,42 +326,43 @@ export const UnifiedView = () => {
     }
 
     // Fallbacks for terminals with poor modifier support.
-    const ctrlTabLike = key.ctrl && (name === "tab" || name === "i")
-    if (ctrlTabLike) {
+    const ctrlTabLike = key.ctrl && keyIs("tab", "i")
+    if (ctrlTabLike || (key.ctrl && keyIs(".", "dot", "period"))) {
       cycleFocus()
       return
     }
 
+    if (key.ctrl && keyIs(",", "comma")) {
+      cycleFocus(-1)
+      return
+    }
+
     if (
-      (key.ctrl && (name === "e" || name === "g")) ||
-      (key.ctrl && key.shift && name === "f")
+      (key.ctrl && keyIs("e", "g")) ||
+      (key.ctrl && key.shift && keyIs("f"))
     ) {
       toggleExpand()
       return
     }
 
     if (
-      (key.ctrl && key.shift && (name === "h" || name === "left")) ||
-      (key.ctrl && (name === "[" || name === ","))
+      (key.ctrl && key.shift && keyIs("h", "left")) ||
+      (key.ctrl && keyIs("[", ",", "openbracket", "leftbracket", "lbracket"))
     ) {
       resizeFocusedPane(-5)
       return
     }
 
     if (
-      (key.ctrl && key.shift && (name === "l" || name === "right")) ||
-      (key.ctrl && (name === "]" || name === "."))
+      (key.ctrl && key.shift && keyIs("l", "right")) ||
+      (key.ctrl && keyIs("]", ".", "closebracket", "rightbracket", "rbracket", "dot", "period"))
     ) {
       resizeFocusedPane(5)
       return
     }
 
     if (key.ctrl) {
-      switch (name) {
-        case "x":
-          agent.cancel()
-          break
-      }
+      if (keyIs("x")) agent.cancel()
       return
     }
 
@@ -423,7 +507,7 @@ export const UnifiedView = () => {
                     bg={isSelected() ? "#333355" : undefined}
                   >
                     <text fg={inContext() ? "#e5c07b" : "#555555"} width={2}>
-                      {inContext() ? "●" : "○"}
+                      {inContext() ? "C" : " "}
                     </text>
                     <text fg={statusColor()} width={2}>
                       {statusChar(file.status)}
@@ -465,7 +549,7 @@ export const UnifiedView = () => {
                     bg={isSelected() ? "#333355" : undefined}
                   >
                     <text fg={inContext() ? "#e5c07b" : "#555555"} width={2}>
-                      {inContext() ? "●" : "○"}
+                      {inContext() ? "C" : " "}
                     </text>
                     <text fg={statusColor()} width={2}>
                       {statusChar(file.status)}
@@ -489,7 +573,7 @@ export const UnifiedView = () => {
       </scrollbox>
 
       <box height={1} width="100%">
-        <text fg="#555555"> {stagedDiffs().length + workingDiffs().length}f </text>
+        <text fg="#555555"> {stagedDiffs().length + workingDiffs().length}f  ctx:{contextCount()} </text>
       </box>
     </box>
   )
@@ -535,9 +619,11 @@ export const UnifiedView = () => {
       <MessageInput
         onSend={(content) => agent.sendMessage(content)}
         onCommand={handleSlashCommand}
+        onInteract={() => setFocusedPane("chat")}
         disabled={agent.isStreaming() || topPermission() !== null || topQuestion() !== null}
-        focused={focusedPane() === "chat"}
+        focused={focusedPane() === "chat" && !leaderArmed()}
         commands={agent.commands() ?? []}
+        suppressInputUntil={suppressInputUntil()}
       />
     </box>
   )
@@ -570,11 +656,13 @@ export const UnifiedView = () => {
                 currentSessionId={agent.currentSessionId()}
                 onSelect={(id) => {
                   agent.switchSession(id)
+                  setLayoutMode("all")
                   setShowSessions(false)
                 }}
                 onClose={() => setShowSessions(false)}
                 onCreate={() => {
                   agent.createSession()
+                  setLayoutMode("all")
                   setShowSessions(false)
                 }}
               />
@@ -598,7 +686,8 @@ export const UnifiedView = () => {
             chat={<ChatPane />}
             diff={<DiffPane />}
             focusedPane={focusedPane()}
-            expandedPane={expandedPane()}
+            onFocusPane={setFocusedPane}
+            layoutMode={layoutMode()}
             diffVisible={diffVisible()}
             baseWidths={paneWidths()}
           />
@@ -610,6 +699,7 @@ export const UnifiedView = () => {
         connected={agent.connected()}
         streaming={agent.isStreaming()}
         leaderLabel={leader.label}
+        contextWindowLabel={contextWindowLabel()}
       />
     </box>
   )

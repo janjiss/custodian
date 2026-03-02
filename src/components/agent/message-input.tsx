@@ -7,9 +7,11 @@ import { useTheme } from "../../theme/engine"
 interface MessageInputProps {
   onSend: (content: string) => void
   onCommand?: (command: string) => void
+  onInteract?: () => void
   disabled: boolean
   focused?: boolean
   commands?: SlashCommand[]
+  suppressInputUntil?: number
 }
 
 const MAX_HISTORY = 50
@@ -45,6 +47,8 @@ export const MessageInput = (props: MessageInputProps) => {
   const visibleCommandRows = createMemo(() => Math.min(filteredCommands().length, 4))
 
   const handleSend = (submitted?: string) => {
+    props.onInteract?.()
+    if ((props.suppressInputUntil ?? 0) > Date.now()) return
     const text = (submitted ?? inputRef?.value ?? value() ?? "").trim()
     if (!text || props.disabled) return
 
@@ -80,6 +84,11 @@ export const MessageInput = (props: MessageInputProps) => {
   }
 
   const handleContentChange = (next: string) => {
+    props.onInteract?.()
+    if ((props.suppressInputUntil ?? 0) > Date.now()) {
+      if (inputRef) inputRef.value = value()
+      return
+    }
     const newContent = next ?? inputRef?.value ?? ""
     setValue(newContent)
     setHistoryIdx(-1)
@@ -146,7 +155,7 @@ export const MessageInput = (props: MessageInputProps) => {
   })
 
   return (
-    <box flexDirection="column" width="100%">
+    <box flexDirection="column" width="100%" onMouseDown={() => props.onInteract?.()}>
       <Show when={showCommands() && filteredCommands().length > 0}>
         <box
           flexDirection="column"

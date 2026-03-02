@@ -76,6 +76,7 @@ export interface ModelInfo {
   providerID: string
   name: string
   status?: string
+  contextWindow?: number
 }
 
 export interface ProviderInfo {
@@ -598,9 +599,32 @@ export class AgentClient {
         providerID,
         name: String((m as Record<string, unknown>).name ?? id),
         status: (m as Record<string, unknown>).status as string | undefined,
+        contextWindow: this.pickContextWindow(m as Record<string, unknown>),
       }
     }
     return result
+  }
+
+  private pickContextWindow(model: Record<string, unknown>): number | undefined {
+    const keys = [
+      "contextWindow",
+      "context_window",
+      "inputTokens",
+      "input_tokens",
+      "maxInputTokens",
+      "max_input_tokens",
+      "maxTokens",
+      "max_tokens",
+    ]
+    for (const key of keys) {
+      const value = model[key]
+      if (typeof value === "number" && Number.isFinite(value) && value > 0) return value
+      if (typeof value === "string") {
+        const parsed = Number(value)
+        if (Number.isFinite(parsed) && parsed > 0) return parsed
+      }
+    }
+    return undefined
   }
 
   private mapCommands(raw: unknown): SlashCommand[] {

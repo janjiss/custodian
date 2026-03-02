@@ -15,6 +15,8 @@ export interface LeaderConfig {
 
 type KeyboardLike = {
   name?: string
+  sequence?: string
+  ch?: string
   ctrl?: boolean
   shift?: boolean
   meta?: boolean
@@ -22,7 +24,24 @@ type KeyboardLike = {
 }
 
 function normalizeKeyName(value: string): string {
-  return value.trim().toLowerCase()
+  const v = value.trim().toLowerCase()
+  if (v === "return") return "enter"
+  if (v === "\r" || v === "\n") return "enter"
+  if (v === " ") return "space"
+  return v
+}
+
+export function getKeyName(key: KeyboardLike): string {
+  const primary = String(key.name ?? "")
+  if (primary) return normalizeKeyName(primary)
+
+  const sequence = String(key.sequence ?? "")
+  if (sequence) return normalizeKeyName(sequence)
+
+  const ch = String(key.ch ?? "")
+  if (ch) return normalizeKeyName(ch)
+
+  return ""
 }
 
 export function parseKeyCombo(input: string, fallback = "ctrl+g"): KeyCombo {
@@ -62,7 +81,7 @@ export function parseKeyCombo(input: string, fallback = "ctrl+g"): KeyCombo {
 }
 
 export function keyMatches(combo: KeyCombo, key: KeyboardLike): boolean {
-  const name = normalizeKeyName(String(key.name ?? ""))
+  const name = getKeyName(key)
   const altPressed = Boolean(key.meta || key.alt)
   return name === combo.key
     && Boolean(key.ctrl) === Boolean(combo.ctrl)
