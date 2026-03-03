@@ -75,10 +75,10 @@ type Model struct {
 	searchIdx     int
 
 	// Session & threads
-	session        *review.ReviewSession
-	threads        []review.Thread
-	threadWg       int // monotonic counter for stale-thread detection
-	allComments    map[string][]review.Comment
+	session     *review.ReviewSession
+	threads     []review.Thread
+	threadWg    int // monotonic counter for stale-thread detection
+	allComments map[string][]review.Comment
 
 	// Thread panel
 	showThreads      bool
@@ -96,8 +96,8 @@ type Model struct {
 	visualStart    int
 
 	// Thread reply
-	replyActive      bool
-	replyInput       string
+	replyActive       bool
+	replyInput        string
 	inlineReplyThread *review.Thread
 
 	// Delete confirmation
@@ -138,11 +138,11 @@ type sessionMsg struct {
 }
 
 type threadsMsg struct {
-	threads    []review.Thread
-	comments   map[string][]review.Comment
-	filePath   string
-	seq        int
-	err        error
+	threads  []review.Thread
+	comments map[string][]review.Comment
+	filePath string
+	seq      int
+	err      error
 }
 
 type commentCreatedMsg struct{ err error }
@@ -934,6 +934,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+		// If no file was previously selected and changes appeared, load the diff.
+		if oldFile == "" && m.visibleCount() > 0 {
+			return m, m.loadDiffForCurrent()
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -1584,6 +1588,14 @@ func (m Model) View() string {
 	right := m.renderDiffPane(contentH)
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, sep, right)
 	footer := m.renderFooter()
+	leftLines := strings.Count(left, "\n") + 1
+	sepLines := strings.Count(sep, "\n") + 1
+	rightLines := strings.Count(right, "\n") + 1
+	bodyLines := strings.Count(body, "\n") + 1
+	footerLines := strings.Count(footer, "\n") + 1
+	totalLines := strings.Count(body+"\n"+footer, "\n") + 1
+	logpkg.Debug("view: height=%d contentH=%d left=%d sep=%d right=%d body=%d footer=%d total=%d",
+		m.height, contentH, leftLines, sepLines, rightLines, bodyLines, footerLines, totalLines)
 	return body + "\n" + footer
 }
 
@@ -1733,6 +1745,7 @@ func (m Model) renderFilePane(h int) string {
 		if end > count {
 			end = count
 		}
+		logpkg.Debug("filePane: sw=%d h=%d available=%d count=%d", sw, h, available, count)
 		for i := start; i < end; i++ {
 			var fc git.FileChange
 			var matchIdxs []int
@@ -1745,13 +1758,34 @@ func (m Model) renderFilePane(h int) string {
 			marker := kindStyle(fc.Kind).Render(fc.Kind.Symbol())
 			isSelected := i == m.cursor
 
+			// Truncate the path so each entry stays on a single line.
+			// Prefix is " M " (3 chars), so the path gets sw-3.
+			maxPathW := sw - 3
+			if maxPathW < 1 {
+				maxPathW = 1
+			}
+			displayPath := fc.Path
+			truncated := len(displayPath) - maxPathW
+			if truncated < 0 {
+				truncated = 0
+			}
+			if truncated > 0 {
+				displayPath = displayPath[truncated:]
+			}
 			var path string
 			if len(matchIdxs) > 0 {
-				path = highlightMatches(fc.Path, matchIdxs, isSelected)
+				// Shift match indexes to account for truncation from the left.
+				shifted := make([]int, 0, len(matchIdxs))
+				for _, idx := range matchIdxs {
+					if idx >= truncated {
+						shifted = append(shifted, idx-truncated)
+					}
+				}
+				path = highlightMatches(displayPath, shifted, isSelected)
 			} else if isSelected {
-				path = lipgloss.NewStyle().Foreground(lipgloss.Color("#FAFAFA")).Bold(true).Render(fc.Path)
+				path = lipgloss.NewStyle().Foreground(lipgloss.Color("#FAFAFA")).Bold(true).Render(displayPath)
 			} else {
-				path = normalStyle.Render(fc.Path)
+				path = normalStyle.Render(displayPath)
 			}
 			entry := fmt.Sprintf(" %s %s", marker, path)
 			if isSelected {
@@ -1938,7 +1972,7 @@ func (m Model) renderFooter() string {
 		}
 		hints = append(hints, "tab/esc files")
 	}
-	return helpStyle.Width(m.width).Render(strings.Join(hints, " • "))
+	return helpStyle.Width(m.width).MaxWidth(m.width).Render(strings.Join(hints, " • "))
 }
 
 func (m Model) visibleFileCount() int {

@@ -10,3 +10,7 @@ dist/
 /custodian-mcp
 /bin/
 *.exe
+
+# Editor MCP configs
+.cursor/
+opencode.json
