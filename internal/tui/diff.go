@@ -212,7 +212,7 @@ func renderParsedDiff(pd *parsedDiff, fileName string, width int, cursorLine int
 
 		if hasThread && dl.kind != lineHunkHeader && dl.kind != lineCollapsed {
 			b.WriteString(renderCommentBlock(ti, width))
-			termLine += commentBlockHeight(ti)
+			termLine += commentBlockHeight(ti, width)
 		}
 	}
 	return b.String(), offsets
@@ -469,7 +469,7 @@ func renderFullFile(content string, fileName string, pd *parsedDiff, width int, 
 
 		if hasThread {
 			b.WriteString(renderCommentBlock(ti, width))
-			termLine += commentBlockHeight(ti)
+			termLine += commentBlockHeight(ti, width)
 		}
 	}
 
@@ -523,14 +523,20 @@ func renderCommentBlock(ti threadInfo, width int) string {
 			border.Render("│")
 		lines = append(lines, authorLine)
 
-		body := c.Body
-		if len(body) > innerW-2 {
-			body = body[:innerW-5] + "..."
+		bodyW := innerW - 1
+		if bodyW < 1 {
+			bodyW = 1
 		}
-		bodyLine := border.Render(prefix) +
-			bg.Foreground(commentBodyColor).Width(innerW).MaxWidth(innerW).Render(" "+body) +
-			border.Render("│")
-		lines = append(lines, bodyLine)
+		wrapped := wordWrap(c.Body, bodyW)
+		if len(wrapped) == 0 {
+			wrapped = []string{""}
+		}
+		for _, wl := range wrapped {
+			bodyLine := border.Render(prefix) +
+				bg.Foreground(commentBodyColor).Width(innerW).MaxWidth(innerW).Render(" "+wl) +
+				border.Render("│")
+			lines = append(lines, bodyLine)
+		}
 	}
 
 	metaLine := border.Render("  │") +
@@ -544,15 +550,43 @@ func renderCommentBlock(ti threadInfo, width int) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-func commentBlockHeight(ti threadInfo) int {
+func commentBlockHeight(ti threadInfo, width int) int {
 	n := len(ti.comments)
 	if n == 0 && ti.body != "" {
 		n = 1
 	}
-	// top + (author + body per comment) + separators between comments + meta + bottom
-	separators := 0
-	if n > 1 {
-		separators = n - 1
+	if n == 0 {
+		return 3
 	}
-	return 1 + n*2 + separators + 1 + 1
+
+	innerW := width - 4
+	if innerW < 20 {
+		innerW = 20
+	}
+	bodyW := innerW - 1
+	if bodyW < 1 {
+		bodyW = 1
+	}
+
+	comments := ti.comments
+	if len(comments) == 0 && ti.body != "" {
+		comments = []review.Comment{{Body: ti.body}}
+	}
+
+	lines := 0
+	for i, c := range comments {
+		if i > 0 {
+			lines++ // separator between comments
+		}
+		lines++ // author line
+		wrapped := wordWrap(c.Body, bodyW)
+		if len(wrapped) == 0 {
+			lines++
+		} else {
+			lines += len(wrapped)
+		}
+	}
+
+	// top + comment lines + meta + bottom
+	return 1 + lines + 1 + 1
 }

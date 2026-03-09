@@ -75,10 +75,11 @@ type Model struct {
 	searchIdx     int
 
 	// Session & threads
-	session     *review.ReviewSession
-	threads     []review.Thread
-	threadWg    int // monotonic counter for stale-thread detection
-	allComments map[string][]review.Comment
+	session      *review.ReviewSession
+	threads      []review.Thread
+	threadWg     int // monotonic counter for stale-thread detection
+	allComments  map[string][]review.Comment
+	threadCounts map[string]int // open thread count per file path
 
 	// Thread panel
 	showThreads      bool
@@ -102,6 +103,9 @@ type Model struct {
 
 	// Delete confirmation
 	confirmDelete *review.Thread
+
+	// Staging
+	stagingInFlight bool
 
 	// Goto line
 	gotoActive bool
@@ -149,6 +153,11 @@ type commentCreatedMsg struct{ err error }
 type threadStatusMsg struct{ err error }
 type threadDeletedMsg struct{ err error }
 type replyCreatedMsg struct{ err error }
+type stageMsg struct{ err error }
+type threadCountsMsg struct {
+	counts map[string]int
+	err    error
+}
 type tickMsg struct{}
 type softChangesMsg struct {
 	changes []git.FileChange
@@ -203,16 +212,24 @@ func (m Model) loadOrCreateSession() tea.Msg {
 }
 
 func (m Model) selectedChange() (git.FileChange, bool) {
-	if m.filtered != nil {
-		if m.cursor >= 0 && m.cursor < len(m.filtered) {
-			return m.changes[m.filtered[m.cursor].Index], true
-		}
+	idx := m.selectedChangeIndex()
+	if idx < 0 {
 		return git.FileChange{}, false
 	}
-	if m.cursor >= 0 && m.cursor < len(m.changes) {
-		return m.changes[m.cursor], true
+	return m.changes[idx], true
+}
+
+func (m Model) selectedChangeIndex() int {
+	if m.filtered != nil {
+		if m.cursor >= 0 && m.cursor < len(m.filtered) {
+			return m.filtered[m.cursor].Index
+		}
+		return -1
 	}
-	return git.FileChange{}, false
+	if m.cursor >= 0 && m.cursor < len(m.changes) {
+		return m.cursor
+	}
+	return -1
 }
 
 func (m Model) visibleCount() int {
@@ -242,6 +259,29 @@ func (m Model) loadDiffForCurrent() tea.Cmd {
 	return func() tea.Msg {
 		content, err := m.repo.Diff(fc, ctx)
 		return diffMsg{content: content, fileName: fc.Path, err: err}
+	}
+}
+
+func (m Model) toggleStage(fc git.FileChange) tea.Cmd {
+	repo := m.repo
+	path := fc.Path
+	return func() tea.Msg {
+		// Query fresh git status to decide the correct operation,
+		// avoiding races when pressing 's' rapidly.
+		changes, err := repo.Changes()
+		if err != nil {
+			return stageMsg{err: err}
+		}
+		for _, c := range changes {
+			if c.Path == path {
+				if c.Staged && !c.Unstaged {
+					return stageMsg{err: repo.Unstage(path)}
+				}
+				return stageMsg{err: repo.Stage(path)}
+			}
+		}
+		// File no longer in changes list; nothing to do.
+		return stageMsg{err: nil}
 	}
 }
 
@@ -287,6 +327,18 @@ func (m Model) loadThreadsForFile() tea.Cmd {
 			commentMap, _ = st.ListCommentsForThreads(ids)
 		}
 		return threadsMsg{threads: threads, comments: commentMap, filePath: fp, seq: seq}
+	}
+}
+
+func (m Model) loadThreadCounts() tea.Cmd {
+	if m.session == nil || m.store == nil {
+		return nil
+	}
+	st := m.store
+	sessID := m.session.ID
+	return func() tea.Msg {
+		counts, err := st.ThreadCountsByFile(sessID)
+		return threadCountsMsg{counts: counts, err: err}
 	}
 }
 
@@ -613,14 +665,14 @@ func (m Model) totalTermLines() int {
 	if m.parsed != nil && !m.showFullFile {
 		if len(m.parsed.lines) > 0 {
 			dl := m.parsed.lines[len(m.parsed.lines)-1]
-			if _, ok := tm[dl.newNum]; ok && dl.kind != lineHunkHeader && dl.kind != lineCollapsed {
-				return last + 1 + commentBlockHeight(threadInfo{})
+			if ti, ok := tm[dl.newNum]; ok && dl.kind != lineHunkHeader && dl.kind != lineCollapsed {
+				return last + 1 + commentBlockHeight(ti, m.rightPaneWidth())
 			}
 		}
 	} else if m.showFullFile && m.fileContent != "" {
 		lineNum := len(m.lineOffsets)
-		if _, ok := tm[lineNum]; ok {
-			return last + 1 + commentBlockHeight(threadInfo{})
+		if ti, ok := tm[lineNum]; ok {
+			return last + 1 + commentBlockHeight(ti, m.rightPaneWidth())
 		}
 	}
 	return last + 1
@@ -661,6 +713,82 @@ func (m Model) computeSearchMatches() []int {
 		}
 	}
 	return out
+}
+
+// jumpToThread moves the diff cursor to the next (dir=1) or previous (dir=-1) thread anchor line.
+func (m Model) jumpToThread(dir int) Model {
+	if len(m.threads) == 0 {
+		return m
+	}
+
+	// Collect all diff-line indices that have a thread anchor, in order.
+	type threadPos struct {
+		diffIdx  int
+		fileLine int
+	}
+	var positions []threadPos
+
+	if m.showFullFile {
+		for _, t := range m.threads {
+			if t.CurrentLine > 0 {
+				idx := t.CurrentLine - 1
+				total := m.totalDiffLines()
+				if idx >= 0 && idx < total {
+					positions = append(positions, threadPos{diffIdx: idx, fileLine: t.CurrentLine})
+				}
+			}
+		}
+	} else if m.parsed != nil {
+		// Build a map from file line -> diff index
+		lineToIdx := make(map[int]int)
+		for i, dl := range m.parsed.lines {
+			if dl.newNum > 0 {
+				lineToIdx[dl.newNum] = i
+			}
+		}
+		for _, t := range m.threads {
+			if t.CurrentLine > 0 {
+				if idx, ok := lineToIdx[t.CurrentLine]; ok {
+					positions = append(positions, threadPos{diffIdx: idx, fileLine: t.CurrentLine})
+				}
+			}
+		}
+	}
+
+	if len(positions) == 0 {
+		return m
+	}
+
+	// Sort by diffIdx
+	for i := 1; i < len(positions); i++ {
+		for j := i; j > 0 && positions[j].diffIdx < positions[j-1].diffIdx; j-- {
+			positions[j], positions[j-1] = positions[j-1], positions[j]
+		}
+	}
+
+	cur := m.diffCursor
+	if dir > 0 {
+		// Find first position strictly after current cursor
+		for _, p := range positions {
+			if p.diffIdx > cur {
+				m.diffCursor = p.diffIdx
+				return m.moveCursor(0)
+			}
+		}
+		// Wrap: go to first
+		m.diffCursor = positions[0].diffIdx
+	} else {
+		// Find last position strictly before current cursor
+		for i := len(positions) - 1; i >= 0; i-- {
+			if positions[i].diffIdx < cur {
+				m.diffCursor = positions[i].diffIdx
+				return m.moveCursor(0)
+			}
+		}
+		// Wrap: go to last
+		m.diffCursor = positions[len(positions)-1].diffIdx
+	}
+	return m.moveCursor(0)
 }
 
 func (m Model) threadAtCursor() *review.Thread {
@@ -767,12 +895,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		logpkg.Debug("active session: %s", m.session.ID)
 		if m.currentFile != "" {
 			m.threadWg++
-			return m, m.loadThreadsForFile()
+			return m, tea.Batch(m.loadThreadsForFile(), m.loadThreadCounts())
 		}
-		return m, nil
+		return m, m.loadThreadCounts()
 
 	case changesMsg:
 		m.err = msg.err
+		// Remember which file the cursor was on before refreshing.
+		cursorFile := ""
+		if fc, ok := m.selectedChange(); ok {
+			cursorFile = fc.Path
+		}
 		m.changes = msg.changes
 		m = m.refilter()
 		if msg.err != nil {
@@ -780,8 +913,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			logpkg.Debug("loaded %d changes", len(msg.changes))
 		}
+		// Restore cursor to the same file.
+		if cursorFile != "" {
+			for i, fc := range m.visibleChanges() {
+				if fc.Path == cursorFile {
+					m.cursor = i
+					break
+				}
+			}
+		}
 		if m.visibleCount() > 0 {
-			return m, m.loadDiffForCurrent()
+			// Only reload diff if the cursor moved to a different file.
+			if fc, ok := m.selectedChange(); ok && fc.Path != m.currentFile {
+				return m, m.loadDiffForCurrent()
+			}
+			return m, nil
 		}
 		return m, nil
 
@@ -818,6 +964,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.threadWg++
 		return m, m.loadThreadsForFile()
 
+	case stageMsg:
+		m.stagingInFlight = false
+		if msg.err != nil {
+			logpkg.Error("stage/unstage: %v", msg.err)
+		}
+		// Refresh the file list to reconcile with actual git state.
+		return m, m.loadChanges
+
 	case fileContentMsg:
 		if msg.err != nil {
 			logpkg.Error("reading file %s: %v", m.currentFile, msg.err)
@@ -850,6 +1004,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case threadCountsMsg:
+		if msg.err == nil {
+			m.threadCounts = msg.counts
+		}
+		return m, nil
+
 	case commentCreatedMsg:
 		m.commentActive = false
 		m.commentInput = ""
@@ -860,7 +1020,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.threadWg++
-		return m, m.loadThreadsForFile()
+		return m, tea.Batch(m.loadThreadsForFile(), m.loadThreadCounts())
 
 	case replyCreatedMsg:
 		m.replyActive = false
@@ -873,7 +1033,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.inlineReplyThread = nil
 			m.threadDetail = nil
 			m.threadWg++
-			return m, m.loadThreadsForFile()
+			return m, tea.Batch(m.loadThreadsForFile(), m.loadThreadCounts())
 		}
 		return m, m.reopenThreadDetail()
 
@@ -884,9 +1044,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.threadWg++
 		if m.threadDetail != nil {
-			return m, tea.Batch(m.loadThreadsForFile(), m.reopenThreadDetail())
+			return m, tea.Batch(m.loadThreadsForFile(), m.reopenThreadDetail(), m.loadThreadCounts())
 		}
-		return m, m.loadThreadsForFile()
+		return m, tea.Batch(m.loadThreadsForFile(), m.loadThreadCounts())
 
 	case threadDeletedMsg:
 		if msg.err != nil {
@@ -894,7 +1054,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.threadWg++
-		return m, m.loadThreadsForFile()
+		return m, tea.Batch(m.loadThreadsForFile(), m.loadThreadCounts())
 
 	case threadDetailMsg:
 		if msg.err != nil {
@@ -912,6 +1072,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, tickCmd())
 		if !m.commentActive && !m.replyActive && !m.filterActive && !m.searchActive && !m.gotoActive {
 			cmds = append(cmds, m.softLoadChanges)
+			if m.session != nil {
+				cmds = append(cmds, m.loadThreadCounts())
+			}
 			if m.currentFile != "" && m.session != nil {
 				m.threadWg++
 				cmds = append(cmds, m.loadThreadsForFile())
@@ -998,6 +1161,13 @@ func (m Model) updateFilePane(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.filterActive {
 		return m.updateFileFilter(msg)
 	}
+	// Block all file pane input while a stage/unstage operation is pending.
+	if m.stagingInFlight {
+		if msg.String() == "q" {
+			return m, tea.Quit
+		}
+		return m, nil
+	}
 	prevCursor := m.cursor
 	switch msg.String() {
 	case "q":
@@ -1026,6 +1196,22 @@ func (m Model) updateFilePane(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filterQuery = ""
 		m = m.refilter()
 		return m, nil
+	case "s":
+		idx := m.selectedChangeIndex()
+		if idx < 0 {
+			return m, nil
+		}
+		fc := m.changes[idx]
+		m.stagingInFlight = true
+		// Optimistic UI: flip staged/unstaged immediately.
+		if fc.Staged && !fc.Unstaged {
+			m.changes[idx].Staged = false
+			m.changes[idx].Unstaged = true
+		} else {
+			m.changes[idx].Staged = true
+			m.changes[idx].Unstaged = false
+		}
+		return m, m.toggleStage(fc)
 	}
 	visible := m.visibleFileCount()
 	if m.cursor < m.listOffset {
@@ -1112,11 +1298,8 @@ func (m Model) updateDiffPane(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.replyActive {
 		return m.updateReplyInput(msg)
 	}
-	if m.showThreads {
-		if m.threadDetail != nil {
-			return m.updateThreadDetail(msg)
-		}
-		return m.updateThreadList(msg)
+	if m.showThreads && m.threadDetail != nil {
+		return m.updateThreadDetail(msg)
 	}
 	if m.visualMode {
 		return m.updateVisualMode(msg)
@@ -1153,6 +1336,12 @@ func (m Model) updateDiffPane(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "}":
 		m = m.jumpBlock(1)
+		return m, nil
+	case "]":
+		m = m.jumpToThread(1)
+		return m, nil
+	case "[":
+		m = m.jumpToThread(-1)
 		return m, nil
 	case "g":
 		m.diffCursor = 0
@@ -1238,11 +1427,6 @@ func (m Model) updateDiffPane(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.visualMode = true
 		m.visualStart = m.diffCursor
 		logpkg.Debug("visual mode started at cursor %d", m.diffCursor)
-		return m, nil
-	case "t":
-		m.showThreads = true
-		m.threadCursor = 0
-		m.threadDetail = nil
 		return m, nil
 	case "enter":
 		if t := m.threadAtCursor(); t != nil {
@@ -1756,11 +1940,27 @@ func (m Model) renderFilePane(h int) string {
 				fc = m.changes[i]
 			}
 			marker := kindStyle(fc.Kind).Render(fc.Kind.Symbol())
+			stageIndicator := " "
+			if fc.Staged && !fc.Unstaged {
+				stageIndicator = lipgloss.NewStyle().Foreground(addedColor).Render("✓")
+			}
 			isSelected := i == m.cursor
 
+			// Thread count badge (e.g. "·2") — 0 means no badge.
+			threadCount := 0
+			if m.threadCounts != nil {
+				threadCount = m.threadCounts[fc.Path]
+			}
+			badgeStr := ""
+			badgeW := 0
+			if threadCount > 0 {
+				badgeStr = fmt.Sprintf("·%d", threadCount)
+				badgeW = len(badgeStr) + 1 // +1 for the space before badge
+			}
+
 			// Truncate the path so each entry stays on a single line.
-			// Prefix is " M " (3 chars), so the path gets sw-3.
-			maxPathW := sw - 3
+			// Prefix is " M✓ " (4 chars), badge is badgeW chars.
+			maxPathW := sw - 4 - badgeW
 			if maxPathW < 1 {
 				maxPathW = 1
 			}
@@ -1787,7 +1987,11 @@ func (m Model) renderFilePane(h int) string {
 			} else {
 				path = normalStyle.Render(displayPath)
 			}
-			entry := fmt.Sprintf(" %s %s", marker, path)
+			var badge string
+			if badgeStr != "" {
+				badge = " " + lipgloss.NewStyle().Foreground(accentColor).Render(badgeStr)
+			}
+			entry := fmt.Sprintf(" %s%s %s%s", marker, stageIndicator, path, badge)
 			if isSelected {
 				lines = append(lines, lipgloss.NewStyle().Background(selectedBg).Width(sw).MaxWidth(sw).Render(entry))
 			} else {
@@ -1853,8 +2057,6 @@ func (m Model) renderDiffPane(h int) string {
 	titleText := " Select a file"
 	if m.showThreads && m.threadDetail != nil {
 		titleText = fmt.Sprintf(" Thread on %s:%d", m.threadDetail.FilePath, m.threadDetail.CurrentLine)
-	} else if m.showThreads {
-		titleText = fmt.Sprintf(" Threads (%d)", len(m.threads))
 	} else if m.currentFile != "" {
 		titleText = fmt.Sprintf(" %s", m.currentFile)
 	}
@@ -1874,8 +2076,6 @@ func (m Model) renderDiffPane(h int) string {
 
 	if m.showThreads && m.threadDetail != nil {
 		parts = append(parts, m.viewport.View())
-	} else if m.showThreads {
-		parts = append(parts, m.renderThreadListContent(rw, contentH))
 	} else if m.parsed != nil {
 		parts = append(parts, m.viewport.View())
 	} else {
@@ -1914,9 +2114,6 @@ func (m Model) diffSubtitle(rw int) string {
 		}
 		return fmt.Sprintf(" [%s] │ c reply │ r resolve/reopen │ esc back", s)
 	}
-	if m.showThreads {
-		return " ↑↓ navigate │ enter detail │ r resolve/reopen │ d delete │ esc close"
-	}
 	if m.parsed != nil {
 		mode := "Diff"
 		if m.showFullFile {
@@ -1939,17 +2136,15 @@ func (m Model) renderFooter() string {
 	if m.focus == paneFiles && m.filterActive {
 		hints = append(hints, "type to filter", "↑↓ navigate", "enter select", "esc clear")
 	} else if m.focus == paneFiles {
-		hints = append(hints, "↑↓/jk navigate", "enter/tab diff", "/ filter", "r refresh", "q quit")
+		hints = append(hints, "↑↓/jk navigate", "enter/tab diff", "s stage/unstage", "/ filter", "r refresh", "q quit")
 	} else if m.visualMode {
 		hints = append(hints, "↑↓/jk extend", "c comment", "esc cancel")
 	} else if m.showThreads && m.threadDetail != nil {
 		hints = append(hints, "↑↓ scroll", "c reply", "r resolve/reopen", "esc back")
-	} else if m.showThreads {
-		hints = append(hints, "↑↓/jk navigate", "enter detail", "r resolve/reopen", "d delete", "esc/t close")
 	} else if m.searchActive {
 		hints = append(hints, "type to search", "enter confirm", "esc cancel")
 	} else {
-		hints = append(hints, "↑↓/jk move", "{/} block", "ctrl+d/u page", "g/G top/bottom")
+		hints = append(hints, "↑↓/jk move", "{/} block", "[/] thread", "ctrl+d/u page", "g/G top/bottom")
 		if m.showFullFile {
 			hints = append(hints, "f diff view")
 		} else {
@@ -1966,7 +2161,7 @@ func (m Model) renderFooter() string {
 		} else {
 			hints = append(hints, "c comment")
 		}
-		hints = append(hints, "v visual", "t threads")
+		hints = append(hints, "v visual")
 		if len(m.searchMatches) > 0 {
 			hints = append(hints, "n/N next/prev")
 		}

@@ -84,22 +84,53 @@ custodian
 | `r` (in thread list/detail) | Resolve / reopen thread |
 | `d` (in thread list) | Delete thread |
 | `c` (in thread detail) | Reply to thread |
+| `s` | Stage / unstage the selected file (marks it as reviewed) |
 
 Comments appear as inline blocks below the commented line, showing the first comment, status, and reply count. Multi-line comments display a range bar (`┃`) alongside the covered lines.
 
+Staged files show a green `✓` next to the change marker in the file list. Press `s` again to unstage.
+
 ### MCP Server
 
-The MCP server lets AI models interact with your review session. Configure it in your AI tool's MCP settings:
+The MCP server lets AI models interact with your review session. It communicates over stdio and needs access to the git repository.
+
+When run without arguments, `custodian-mcp` uses the current working directory to find the repo. You can also pass a path explicitly:
+
+```bash
+custodian-mcp /path/to/your/repo
+```
+
+#### Editor Configuration
+
+**Cursor** — add to `.cursor/mcp.json` in your project:
 
 ```json
 {
   "mcpServers": {
     "custodian": {
-      "command": "custodian-mcp"
+      "command": "custodian-mcp",
+      "args": ["/path/to/your/repo"]
     }
   }
 }
 ```
+
+**OpenCode** — add to `opencode.json` in your project:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "custodian": {
+      "type": "local",
+      "command": ["custodian-mcp", "/path/to/your/repo"],
+      "enabled": true
+    }
+  }
+}
+```
+
+> **Note:** Some editors set the working directory to the project root when launching MCP servers. In that case the path argument is optional, but it's safer to always include it.
 
 #### Available Tools
 
@@ -111,6 +142,8 @@ The MCP server lets AI models interact with your review session. Configure it in
 | `review_resolve_thread` | Mark a thread as resolved |
 | `review_reopen_thread` | Reopen a resolved thread |
 | `review_apply_edit` | Write new content to a file |
+| `review_stage_file` | Stage a file (git add) to mark it as reviewed |
+| `review_unstage_file` | Unstage a file (git reset) to unmark it as reviewed |
 
 ## Architecture
 

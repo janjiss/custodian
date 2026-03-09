@@ -55,7 +55,15 @@ type Repo struct {
 }
 
 func OpenRepo() (*Repo, error) {
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	return OpenRepoAt("")
+}
+
+func OpenRepoAt(dir string) (*Repo, error) {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("not a git repository (or git is not installed)")
 	}
@@ -235,6 +243,42 @@ func (r *Repo) ReadFile(path string) (string, error) {
 	}
 	logpkg.Debug("ReadFile %s: %d bytes", path, len(data))
 	return string(data), nil
+}
+
+func (r *Repo) Stage(path string) error {
+	_, err := r.git("add", "--", path)
+	if err != nil {
+		logpkg.Error("git add %s: %v", path, err)
+		return fmt.Errorf("git add %s: %w", path, err)
+	}
+	logpkg.Debug("staged %s", path)
+	return nil
+}
+
+func (r *Repo) Unstage(path string) error {
+	// Use restore --staged which handles all cases: tracked files, new files,
+	// and is a no-op if the file is already unstaged.
+	_, err := r.git("restore", "--staged", "--", path)
+	if err == nil {
+		logpkg.Debug("unstaged %s", path)
+		return nil
+	}
+	// Fallback for older git versions without restore.
+	logpkg.Debug("restore --staged failed for %s, trying reset HEAD", path)
+	_, err = r.git("reset", "HEAD", "--", path)
+	if err == nil {
+		logpkg.Debug("unstaged %s (reset HEAD)", path)
+		return nil
+	}
+	// Last resort for files not in HEAD (newly added).
+	logpkg.Debug("reset HEAD failed for %s, trying rm --cached", path)
+	_, err = r.git("rm", "--cached", "--", path)
+	if err != nil {
+		logpkg.Error("git unstage %s: all methods failed", path)
+		return fmt.Errorf("git unstage %s: %w", path, err)
+	}
+	logpkg.Debug("unstaged %s (rm --cached)", path)
+	return nil
 }
 
 func (r *Repo) git(args ...string) (string, error) {

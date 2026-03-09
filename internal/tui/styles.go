@@ -15,7 +15,7 @@ var (
 	deletedBgColor = lipgloss.Color("#2a0d0d")
 	collapsedBg    = lipgloss.Color("#1a1a2e")
 
-	cursorBg        = lipgloss.Color("#2a2a3e")
+	cursorBg        = lipgloss.Color("#1f2230")
 	cursorAddedBg   = lipgloss.Color("#163d28")
 	cursorDeletedBg = lipgloss.Color("#3d1616")
 
@@ -95,10 +95,10 @@ var (
 			Padding(0, 1)
 
 	outdatedBadge = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#F59E0B")).
-		Bold(true)
+			Foreground(lipgloss.Color("#F59E0B")).
+			Bold(true)
 
-	commentBlockBg    = lipgloss.Color("#1e1e2e")
+	commentBlockBg     = lipgloss.Color("#1e1e2e")
 	commentBlockBorder = lipgloss.Color("#4a4a6a")
 	commentBodyColor   = lipgloss.Color("#CDD6F4")
 	commentMetaColor   = lipgloss.Color("#6C7086")

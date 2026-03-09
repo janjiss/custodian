@@ -194,6 +194,28 @@ func (s *Store) ListThreads(sessionID, filePath string) ([]review.Thread, error)
 	return threads, rows.Err()
 }
 
+// ThreadCountsByFile returns a map of file_path → open thread count for the session.
+func (s *Store) ThreadCountsByFile(sessionID string) (map[string]int, error) {
+	rows, err := s.db.Query(`
+		SELECT file_path, COUNT(*) FROM threads
+		WHERE session_id = ? AND status = 'open'
+		GROUP BY file_path`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := make(map[string]int)
+	for rows.Next() {
+		var fp string
+		var n int
+		if err := rows.Scan(&fp, &n); err != nil {
+			return nil, err
+		}
+		counts[fp] = n
+	}
+	return counts, rows.Err()
+}
+
 func (s *Store) UpdateThreadLine(id string, currentLine int, outdated bool) error {
 	_, err := s.db.Exec(
 		"UPDATE threads SET current_line = ?, is_outdated = ?, updated_at = ? WHERE id = ?",

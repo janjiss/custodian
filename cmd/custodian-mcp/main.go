@@ -12,7 +12,11 @@ import (
 )
 
 func main() {
-	repo, err := git.OpenRepo()
+	var dir string
+	if len(os.Args) > 1 {
+		dir = os.Args[1]
+	}
+	repo, err := git.OpenRepoAt(dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "custodian-mcp: %v\n", err)
 		os.Exit(1)

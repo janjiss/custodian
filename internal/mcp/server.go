@@ -31,6 +31,8 @@ func NewServer(repo *git.Repo, st *store.Store) *server.MCPServer {
 	s.AddTool(resolveThreadTool(), ctx.handleResolveThread)
 	s.AddTool(reopenThreadTool(), ctx.handleReopenThread)
 	s.AddTool(applyEditTool(), ctx.handleApplyEdit)
+	s.AddTool(stageFileTool(), ctx.handleStageFile)
+	s.AddTool(unstageFileTool(), ctx.handleUnstageFile)
 
 	return s
 }
@@ -91,6 +93,26 @@ func reopenThreadTool() mcp.Tool {
 		mcp.WithString("thread_id",
 			mcp.Required(),
 			mcp.Description("The ID of the thread to reopen."),
+		),
+	)
+}
+
+func stageFileTool() mcp.Tool {
+	return mcp.NewTool("review_stage_file",
+		mcp.WithDescription("Stage a file (git add). Use this to mark a file as reviewed after addressing feedback."),
+		mcp.WithString("file_path",
+			mcp.Required(),
+			mcp.Description("File path relative to the repository root."),
+		),
+	)
+}
+
+func unstageFileTool() mcp.Tool {
+	return mcp.NewTool("review_unstage_file",
+		mcp.WithDescription("Unstage a file (git reset HEAD). Use this to unmark a file as reviewed."),
+		mcp.WithString("file_path",
+			mcp.Required(),
+			mcp.Description("File path relative to the repository root."),
 		),
 	)
 }
@@ -310,4 +332,34 @@ func (c *toolCtx) handleApplyEdit(_ context.Context, req mcp.CallToolRequest) (*
 
 	logpkg.Debug("mcp apply_edit: wrote %d bytes to %s", len(content), filePath)
 	return mcp.NewToolResultText(fmt.Sprintf("File %s updated (%d bytes)", filePath, len(content))), nil
+}
+
+func (c *toolCtx) handleStageFile(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	filePath, err := req.RequireString("file_path")
+	if err != nil {
+		return mcp.NewToolResultError("file_path is required"), nil
+	}
+
+	if err := c.repo.Stage(filePath); err != nil {
+		logpkg.Error("mcp stage_file: %v", err)
+		return mcp.NewToolResultError(fmt.Sprintf("failed to stage file: %v", err)), nil
+	}
+
+	logpkg.Debug("mcp stage_file: staged %s", filePath)
+	return mcp.NewToolResultText(fmt.Sprintf("File %s staged", filePath)), nil
+}
+
+func (c *toolCtx) handleUnstageFile(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	filePath, err := req.RequireString("file_path")
+	if err != nil {
+		return mcp.NewToolResultError("file_path is required"), nil
+	}
+
+	if err := c.repo.Unstage(filePath); err != nil {
+		logpkg.Error("mcp unstage_file: %v", err)
+		return mcp.NewToolResultError(fmt.Sprintf("failed to unstage file: %v", err)), nil
+	}
+
+	logpkg.Debug("mcp unstage_file: unstaged %s", filePath)
+	return mcp.NewToolResultText(fmt.Sprintf("File %s unstaged", filePath)), nil
 }

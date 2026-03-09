@@ -8,6 +8,42 @@ import (
 	"github.com/janjiss/custodian/internal/review"
 )
 
+func truncateLine(s string, max int) string {
+	if max < 1 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max-1]) + "…"
+}
+
+func wordWrap(s string, width int) []string {
+	if width < 1 {
+		width = 1
+	}
+	var lines []string
+	for _, paragraph := range strings.Split(s, "\n") {
+		words := strings.Fields(paragraph)
+		if len(words) == 0 {
+			lines = append(lines, "")
+			continue
+		}
+		current := words[0]
+		for _, word := range words[1:] {
+			if len([]rune(current))+1+len([]rune(word)) <= width {
+				current += " " + word
+			} else {
+				lines = append(lines, current)
+				current = word
+			}
+		}
+		lines = append(lines, current)
+	}
+	return lines
+}
+
 func (m Model) renderThreadListContent(rw, h int) string {
 	if len(m.threads) == 0 {
 		line := normalStyle.Width(rw).MaxWidth(rw).Render("  No threads for this file. Press c on a line to add one.")
@@ -90,8 +126,9 @@ func (m Model) renderThreadDetailContent(rw int) string {
 		anchorLabel := lipgloss.NewStyle().Foreground(mutedColor).Italic(true).Render("  Anchor:")
 		b.WriteString(anchorLabel)
 		b.WriteString("\n")
+		prefixW := 4 // "  │ "
 		for _, line := range strings.Split(t.AnchorContent, "\n") {
-			b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#A1A1AA")).Render("  │ "+line))
+			b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#A1A1AA")).Width(rw).MaxWidth(rw).Render("  │ " + truncateLine(line, rw-prefixW)))
 			b.WriteString("\n")
 		}
 		b.WriteString(sep)
@@ -113,9 +150,12 @@ func (m Model) renderThreadDetailContent(rw int) string {
 		b.WriteString(meta)
 		b.WriteString("\n")
 
+		bodyW := rw - 2 // account for "  " prefix
 		for _, line := range strings.Split(c.Body, "\n") {
-			b.WriteString(normalStyle.Render("  "+line))
-			b.WriteString("\n")
+			for _, wrapped := range wordWrap(line, bodyW) {
+				b.WriteString(normalStyle.Width(rw).MaxWidth(rw).Render("  " + wrapped))
+				b.WriteString("\n")
+			}
 		}
 		b.WriteString("\n")
 	}
